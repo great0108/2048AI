@@ -15,8 +15,8 @@ class Env2048(object):
     def reset(self):
         self.score = 0
         self.board = [[0] * self.n for i in range(self.n)]
-        self.randomTile()
-        self.randomTile()
+        self.random_tile()
+        self.random_tile()
         return self.board
 
     def step(self, way):
@@ -26,9 +26,9 @@ class Env2048(object):
 
         moved = (last_board != self.board)
         if moved:
-            self.randomTile()
-   
-        canMove = self.canMove()
+            self.random_tile()
+
+        canMove = self.able_move()
         over = not any(canMove)
         return self.board, score, over, canMove
 
@@ -131,7 +131,7 @@ class Env2048(object):
 
         return score
 
-    def canMove(self):
+    def able_move(self):
         move = []
         for i in range(4):
             board = [row[:] for row in self.board]
@@ -139,17 +139,17 @@ class Env2048(object):
             move.append(self.board != board)
         return move
 
-    def isEnd(self):
-        return not any(self.canMove())
+    def is_end(self):
+        return not any(self.able_move())
 
-    def emptyCells(self):
+    def empty_cells(self):
         for i in range(self.n):
             for j in range(self.n):
                 if self.board[i][j] == 0:
                     yield i, j
 
-    def randomTile(self):
-        cells = list(self.emptyCells())
+    def random_tile(self):
+        cells = list(self.empty_cells())
         if not cells:
             return False
 

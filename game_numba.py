@@ -113,7 +113,7 @@ def move(board, way):
     return score
 
 @njit
-def canMove(board):
+def able_move(board):
     moves = []
     for i in range(4):
         board2 = board.copy()
@@ -122,8 +122,8 @@ def canMove(board):
     return moves
 
 @njit
-def isEnd(board):
-    canMov = canMove(board)
+def is_end(board):
+    canMov = able_move(board)
     over = True
     for i in range(len(canMov)):
         if canMov[i]:
@@ -132,7 +132,7 @@ def isEnd(board):
     return over
 
 @njit
-def emptyCells(board):
+def empty_cells(board):
     n = len(board)
     result = np.empty((n*n, 2), dtype=np.int64)
     idx = 0
@@ -145,8 +145,8 @@ def emptyCells(board):
     return result[:idx]
 
 @njit
-def randomTile(board):
-    cells = emptyCells(board)
+def random_tile(board):
+    cells = empty_cells(board)
     if len(cells) == 0:
         return
 
@@ -162,9 +162,9 @@ def step(board, way):
 
     moved = not np.array_equal(last_board, board)
     if moved:
-        randomTile(board)
+        random_tile(board)
 
-    canMov = canMove(board)
+    canMov = able_move(board)
     over = True
     for i in range(len(canMov)):
         if canMov[i]:
@@ -173,10 +173,10 @@ def step(board, way):
     return score, over, canMov
 
 @njit
-def initBoard(n):
+def init_board(n):
     board = np.zeros((n, n))
     for _ in range(2):
-        randomTile(board)
+        random_tile(board)
     return board
 
 
@@ -184,11 +184,11 @@ class Env2048(object):
     def __init__(self, n):
         self.n = n
         self.score = 0
-        self.board = initBoard(n)
+        self.board = init_board(n)
 
     def reset(self):
         self.score = 0
-        self.board = initBoard(self.n)
+        self.board = init_board(self.n)
         return self.board
 
     def step(self, way):
