@@ -156,6 +156,24 @@ def random_tile(board):
     board[i][j] = v
 
 @njit
+def all_next_board(board):
+    cells = empty_cells(board)
+    if len(cells) == 0:
+        return
+    
+    board = np.expand_dims(board, axis=0) + np.zeros((len(cells)*2, 4, 4))
+    probs = np.zeros(len(cells)*2)
+    base_prob = 1 / len(cells)
+    for i in range(len(cells)):
+        a, b = cells[i]
+        board[i*2][a][b] = 2
+        board[i*2+1][a][b] = 4
+        probs[i*2] = base_prob * 0.9
+        probs[i*2+1] = base_prob * 0.1
+
+    return board, probs
+
+@njit
 def step(board, way):
     last_board = board.copy()
     score = move(board, way)
@@ -178,6 +196,15 @@ def init_board(n):
     for _ in range(2):
         random_tile(board)
     return board
+
+@njit
+def board_hash(board):
+    s = 0
+    for i in range(len(board)):
+        for j in range(len(board)):
+            if board[i][j]:
+                s += 16 ** (i*4+j) * int(np.log2(board[i][j]))
+    return s
 
 
 class Env2048(object):
