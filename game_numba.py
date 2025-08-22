@@ -118,8 +118,16 @@ def able_move(board):
     for i in range(4):
         board2 = board.copy()
         move(board2, i)
-        moves.append(not np.array_equal(board, board2))
+        moves.append(not same_board(board, board2))
     return moves
+
+@njit
+def same_board(board1, board2):
+    for i in range(4):
+        for j in range(4):
+            if board1[i][j] != board2[i][j]:
+                return 0
+    return 1
 
 @njit
 def is_end(board):
@@ -158,13 +166,14 @@ def random_tile(board):
 @njit
 def all_next_board(board):
     cells = empty_cells(board)
-    if len(cells) == 0:
+    num_cells = len(cells)
+    if num_cells == 0:
         return
     
-    board = np.expand_dims(board, axis=0) + np.zeros((len(cells)*2, 4, 4))
-    probs = np.zeros(len(cells)*2)
-    base_prob = 1 / len(cells)
-    for i in range(len(cells)):
+    board = np.expand_dims(board, axis=0) + np.zeros((num_cells*2, 4, 4))
+    probs = np.zeros(num_cells*2)
+    base_prob = 1 / num_cells
+    for i in range(num_cells):
         a, b = cells[i]
         board[i*2][a][b] = 2
         board[i*2+1][a][b] = 4
@@ -174,11 +183,28 @@ def all_next_board(board):
     return board, probs
 
 @njit
+def next_2_board(board):
+    cells = empty_cells(board)
+    num_cells = len(cells)
+    if num_cells == 0:
+        return
+    
+    board = np.expand_dims(board, axis=0) + np.zeros((num_cells, 4, 4))
+    probs = np.zeros(num_cells)
+    base_prob = 1 / len(cells)
+    for i in range(len(cells)):
+        a, b = cells[i]
+        board[i][a][b] = 2
+        probs[i] = base_prob
+
+    return board, probs
+
+@njit
 def step(board, way):
     last_board = board.copy()
     score = move(board, way)
 
-    moved = not np.array_equal(last_board, board)
+    moved = not same_board(last_board, board)
     if moved:
         random_tile(board)
 

@@ -9,7 +9,7 @@ def find_best(board, depth=0):
         depth = max(3, (16 - len(empty_cells(board))) // 3)
 
     best_move = 3
-    best = -10**9
+    best = -200000
     alpha = best
     for mov in [3, 0, 2, 1]: # prefer down
         new_board = board.copy()
@@ -32,21 +32,21 @@ def find_best(board, depth=0):
         if best > alpha:
             alpha = best
 
+    if best == -200000:
+        print("game over board")
+
     return best_move
 
 @njit
 def expectimax_pvs(board, depth, alpha):
-    if is_end(board):
-        return -200000
-
     if depth == 0:
         return evaluate(board)
 
-    best = -10**9
+    best = -200000
     for mov in [3, 0, 2, 1]: # prefer down
         new_board = board.copy()
         move(new_board, mov)
-        if np.array_equal(new_board, board):
+        if same_board(new_board, board):
             continue
 
         value = 0
