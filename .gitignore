@@ -10,9 +10,6 @@ test.py
 *.txt
 
 
-!map_direct.png
-!map.png
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
