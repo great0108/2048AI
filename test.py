@@ -20,5 +20,17 @@ board = [
 # ]
 board = np.array(board)
 # evaluate(board)
-move = find_best(board, 3)
-print(move)
+
+def test(runs=1):
+    for i in range(runs):
+        move = find_best(board)
+
+if __name__ == '__main__':
+    import timeit
+    import sys
+    print("testing first run")
+    print(timeit.timeit('test()', globals=globals(), number=1))
+    print("testing 10 runs")
+    print(timeit.timeit('test(10)', globals=globals(), number=1))
+
+    sys.exit(0)
