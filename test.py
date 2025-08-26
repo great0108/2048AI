@@ -18,29 +18,28 @@ board = [[ 4,  8,  2, 32],
  [ 0,  0,  2,  2],
  [ 0,  0,  8,  0]]
 
-# board = [[16,  4,  0,  0],
-# [64, 16,  2, 2],
-# [256, 128,   8,   2],
-# [512,   2,  16,   4]]
+board = [[16,  4,  0,  0],
+         [64, 16,  2, 2],
+         [256, 128,   8,   2],
+         [512,   2,  16,   4]]
 
 
 board = np.array(board)
-print(evaluate(board))
-for i in range(4):
-    print(expectimax_pvs(board, i+1, -1e+6))
+# print(evaluate(board))
+# for i in range(4):
+#     print(find_best(board, i+1))
 
 
 def test(runs=1):
     for i in range(runs):
         move = find_best(board)
-        print(move)
 
 if __name__ == '__main__':
     import timeit
     import sys
-    # print("testing first run")
-    # print(timeit.timeit('test()', globals=globals(), number=1))
-    # print("testing 10 runs")
-    # print(timeit.timeit('test(10)', globals=globals(), number=1))
+    print("testing first run")
+    print(timeit.timeit('test()', globals=globals(), number=1))
+    print("testing 100 runs")
+    print(timeit.timeit('test(100)', globals=globals(), number=1))
 
     sys.exit(0)

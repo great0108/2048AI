@@ -1,7 +1,6 @@
 import numpy as np
 from game_numba import *
 from numba import njit, types
-from numba.typed import Dict
 
 @njit
 def find_best(board, depth=0):
@@ -22,15 +21,14 @@ def find_best(board, depth=0):
         for i in range(len(next_boards)):
             v = expectimax_pvs(next_boards[i], depth-1, alpha)
             value += v * probs[i]
-        #     print(next_boards[i], v)
+            # print(next_boards[i], v)
 
         # print(mov, value)
 
         if value > best:
             best = value
             best_move = mov
-        if best > alpha:
-            alpha = best
+            alpha = min(value - 1000, value * 1.1, value * 0.9)
 
     if best == -1e+6:
         print("ai cannot choose move")
@@ -44,10 +42,12 @@ def find_best(board, depth=0):
 
 @njit
 def expectimax_pvs(board, depth, alpha):
-    if depth == 0:
-        return evaluate(board)
+    value = evaluate(board)
+    if depth == 0 or alpha > value:
+        return value
 
     best = -1e+6
+    alpha = best
     for mov in [3, 0, 2, 1]: # prefer down
         new_board = board.copy()
         move(new_board, mov)
@@ -62,8 +62,7 @@ def expectimax_pvs(board, depth, alpha):
 
         if value > best:
             best = value
-        if best > alpha:
-            alpha = best
+            alpha = min(value - 1000, value * 1.1, value * 0.9)
 
     return best
 
@@ -82,8 +81,8 @@ def pre_evaluate():
 
 @njit
 def evaluate_line(line):
-    # snake= [[10,8,7,6.5],
-    #         [.5,.7,1,3],
+    # snake= [[1,1,1,1],
+    #         [.5,.7,1,1],
     #         [-.5,-1.5,-1.8,-2],
     #         [-3.8,-3.7,-3.5,-3]]
     

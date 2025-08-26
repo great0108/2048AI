@@ -218,7 +218,7 @@ def step(board, way):
 
 @njit
 def init_board(n):
-    board = np.zeros((n, n))
+    board = np.zeros((n, n), dtype=np.int64)
     for _ in range(2):
         random_tile(board)
     return board
