@@ -191,8 +191,8 @@ def next_2_board(board):
     
     board = np.expand_dims(board, axis=0) + np.zeros((num_cells, 4, 4))
     probs = np.zeros(num_cells)
-    base_prob = 1 / len(cells)
-    for i in range(len(cells)):
+    base_prob = 1 / num_cells
+    for i in range(num_cells):
         a, b = cells[i]
         board[i][a][b] = 2
         probs[i] = base_prob

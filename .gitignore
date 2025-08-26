@@ -3,7 +3,6 @@ wandb/
 *.jpg
 *.jpeg
 *.wav
-test.py
 *.zip
 *.json
 *.pth

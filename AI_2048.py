@@ -6,10 +6,10 @@ from numba.typed import Dict
 @njit
 def find_best(board, depth=0):
     if depth == 0:
-        depth = max(3, (16 - len(empty_cells(board))) // 3)
+        depth = max(3, (17 - len(empty_cells(board))) // 3)
 
     best_move = 3
-    best = -200000
+    best = -1e+6
     alpha = best
     for mov in [3, 0, 2, 1]: # prefer down
         new_board = board.copy()
@@ -32,8 +32,13 @@ def find_best(board, depth=0):
         if best > alpha:
             alpha = best
 
-    if best == -200000:
-        print("game over board")
+    if best == -1e+6:
+        print("ai cannot choose move")
+        for mov in [3, 0, 2, 1]: # prefer down
+            new_board = board.copy()
+            move(new_board, mov)
+            if not np.array_equal(new_board, board):
+                return mov
 
     return best_move
 
@@ -42,7 +47,7 @@ def expectimax_pvs(board, depth, alpha):
     if depth == 0:
         return evaluate(board)
 
-    best = -200000
+    best = -1e+6
     for mov in [3, 0, 2, 1]: # prefer down
         new_board = board.copy()
         move(new_board, mov)
@@ -50,7 +55,7 @@ def expectimax_pvs(board, depth, alpha):
             continue
 
         value = 0
-        next_boards, probs = all_next_board(new_board)
+        next_boards, probs = next_2_board(new_board)
         for i in range(len(next_boards)):
             v = expectimax_pvs(next_boards[i], depth-1, alpha)
             value += v * probs[i]
@@ -77,17 +82,21 @@ def pre_evaluate():
 
 @njit
 def evaluate_line(line):
-    sum_power = 3.5
-    sum_weight = 11
+    # snake= [[10,8,7,6.5],
+    #         [.5,.7,1,3],
+    #         [-.5,-1.5,-1.8,-2],
+    #         [-3.8,-3.7,-3.5,-3]]
+    
+    # sum_power = 3.5
+    # sum_weight = 11
     monotonic_power = 4
-    monotonic_weight = 20
-    merge_weight = 1400
-    empty_weight = 270
+    monotonic_weight = 3
+    merge_weight = 40
+    empty_weight = 27
 
     sum_value = 0
     empty = 0
     merges = 0
-    monotonic = 0
 
     monotonic_left = 0
     monotonic_right = 0
@@ -95,25 +104,25 @@ def evaluate_line(line):
 
     for i in range(4):
         rank = line[i]
-        sum_value += rank ** sum_power
+        sum_value += 2 ** rank
         if rank == 0:
             empty += 1
         else:
             if prev == rank:
-                merges += 1
+                merges += rank
             prev = rank
 
         if i > 0:
-            prev_rank = line[i]
+            prev_rank = line[i-1]
             if rank > prev_rank:
                 monotonic_left += prev_rank ** monotonic_power - rank ** monotonic_power
             else:
                 monotonic_right += rank ** monotonic_power - prev_rank ** monotonic_power
 
-    monotonic += max(monotonic_left, monotonic_right)
+    monotonic = max(monotonic_left, monotonic_right)
 
     value = empty * empty_weight + merges * merge_weight \
-        + monotonic * monotonic_weight + sum_value * sum_weight
+        + monotonic * monotonic_weight + sum_value
 
     return value
 
@@ -133,7 +142,6 @@ def _evaluate(rank):
     value = 0
     for i in range(4):
         idx = rank[i][0] + rank[i][1] * 2**4 + rank[i][2] * 2**8 + rank[i][3] * 2**12
-
         value += value_table[idx]
 
     return value
