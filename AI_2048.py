@@ -10,14 +10,24 @@ def find_best(board, depth=0):
     best_move = 3
     best = -1e+6
     alpha = best
+    first = True
     for mov in [3, 0, 2, 1]: # prefer down
-        new_board = board.copy()
+        new_board = copy_board(board)
         move(new_board, mov)
         if np.array_equal(new_board, board):
             continue
 
         value = 0
         next_boards, probs = all_next_board(new_board)
+        if not first and depth > 1:
+            for i in range(len(next_boards)):
+                v = evaluate(next_boards[i])
+                value += v * probs[i]
+
+        if value < alpha:
+            continue
+
+        value = 0
         for i in range(len(next_boards)):
             v = expectimax_pvs(next_boards[i], depth-1, alpha)
             value += v * probs[i]
@@ -28,12 +38,12 @@ def find_best(board, depth=0):
         if value > best:
             best = value
             best_move = mov
-            alpha = min(value - 1000, value * 1.1, value * 0.9)
+            alpha = min(value - 1000, value * 1.2, value * 0.8)
 
     if best == -1e+6:
         print("ai cannot choose move")
         for mov in [3, 0, 2, 1]: # prefer down
-            new_board = board.copy()
+            new_board = copy_board(board)
             move(new_board, mov)
             if not np.array_equal(new_board, board):
                 return mov
@@ -42,27 +52,35 @@ def find_best(board, depth=0):
 
 @njit
 def expectimax_pvs(board, depth, alpha):
-    value = evaluate(board)
-    if depth == 0 or alpha > value:
-        return value
+    if depth == 0:
+        return evaluate(board)
 
     best = -1e+6
-    alpha = best
+    first = True
     for mov in [3, 0, 2, 1]: # prefer down
-        new_board = board.copy()
+        new_board = copy_board(board)
         move(new_board, mov)
         if same_board(new_board, board):
             continue
 
         value = 0
         next_boards, probs = next_2_board(new_board)
+        if not first and depth > 1:
+            for i in range(len(next_boards)):
+                v = evaluate(next_boards[i])
+                value += v * probs[i]
+
+        if value < alpha:
+            continue
+
+        value = 0
         for i in range(len(next_boards)):
             v = expectimax_pvs(next_boards[i], depth-1, alpha)
             value += v * probs[i]
 
         if value > best:
             best = value
-            alpha = min(value - 1000, value * 1.1, value * 0.9)
+            alpha = max(alpha, min(value - 1000, value * 1.2, value * 0.8))
 
     return best
 

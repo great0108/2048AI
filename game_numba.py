@@ -116,7 +116,7 @@ def move(board, way):
 def able_move(board):
     moves = []
     for i in range(4):
-        board2 = board.copy()
+        board2 = copy_board(board)
         move(board2, i)
         moves.append(not same_board(board, board2))
     return moves
@@ -128,6 +128,15 @@ def same_board(board1, board2):
             if board1[i][j] != board2[i][j]:
                 return 0
     return 1
+
+@njit
+def copy_board(board):
+    new_board = np.zeros((4, 4))
+    for i in range(4):
+        for j in range(4):
+            new_board[i][j] = board[i][j]
+
+    return new_board
 
 @njit
 def is_end(board):
@@ -201,7 +210,7 @@ def next_2_board(board):
 
 @njit
 def step(board, way):
-    last_board = board.copy()
+    last_board = copy_board(board)
     score = move(board, way)
 
     moved = not same_board(last_board, board)
