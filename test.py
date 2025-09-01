@@ -13,19 +13,19 @@ board = [
     [0, 2, 8, 2]
 ]
 
-board = [[ 4,  8,  2, 32],
- [ 2,  2,  8, 16],
- [ 0,  0,  2,  2],
- [ 0,  0,  8,  0]]
+# board = [[0, 0, 0, 0],
+# [0, 0, 0, 4],
+# [2, 4, 8, 0],
+# [256, 128, 128, 0]]
 
-board = [[16,  4,  0,  0],
-         [64, 16,  2, 2],
-         [256, 128,   8,   2],
-         [512,   2,  16,   4]]
 
+board = [[0, 0, 0, 0],
+[0, 0, 2, 2],
+[2, 4, 4, 4],
+[256, 128,  64,  64]]
 
 board = np.array(board)
-# print(evaluate(board))
+print(find_best(board, 3))
 # for i in range(4):
 #     print(find_best(board, i+1))
 
@@ -37,9 +37,9 @@ def test(runs=1):
 if __name__ == '__main__':
     import timeit
     import sys
-    print("testing first run")
-    print(timeit.timeit('test()', globals=globals(), number=1))
-    print("testing 100 runs")
-    print(timeit.timeit('test(100)', globals=globals(), number=1))
+    # print("testing first run")
+    # print(timeit.timeit('test()', globals=globals(), number=1))
+    # print("testing 100 runs")
+    # print(timeit.timeit('test(100)', globals=globals(), number=1))
 
     sys.exit(0)

@@ -19,26 +19,26 @@ def find_best(board, depth=0):
 
         value = 0
         next_boards, probs = all_next_board(new_board)
-        if not first and depth > 1:
-            for i in range(len(next_boards)):
-                v = evaluate(next_boards[i])
-                value += v * probs[i]
+        # if not first and depth > 1:
+        #     for i in range(len(next_boards)):
+        #         v = evaluate(next_boards[i])
+        #         value += v * probs[i]
 
-        if value < alpha:
-            continue
+        # if value < alpha:
+        #     continue
 
         value = 0
         for i in range(len(next_boards)):
             v = expectimax_pvs(next_boards[i], depth-1, alpha)
             value += v * probs[i]
-            # print(next_boards[i], v)
+        #     print(next_boards[i], v)
 
         # print(mov, value)
 
         if value > best:
             best = value
             best_move = mov
-            alpha = min(value - 1000, value * 1.2, value * 0.8)
+            alpha = min(value - 5000, value * 1.2, value * 0.8)
 
     if best == -1e+6:
         print("ai cannot choose move")
@@ -64,14 +64,17 @@ def expectimax_pvs(board, depth, alpha):
             continue
 
         value = 0
-        next_boards, probs = next_2_board(new_board)
-        if not first and depth > 1:
-            for i in range(len(next_boards)):
-                v = evaluate(next_boards[i])
-                value += v * probs[i]
+        if depth < 3:
+            next_boards, probs = next_2_board(new_board)
+        else:
+            next_boards, probs = all_next_board(new_board)
+        # if not first and depth > 1:
+        #     for i in range(len(next_boards)):
+        #         v = evaluate(next_boards[i])
+        #         value += v * probs[i]
 
-        if value < alpha:
-            continue
+        # if value < alpha:
+        #     continue
 
         value = 0
         for i in range(len(next_boards)):
@@ -80,13 +83,13 @@ def expectimax_pvs(board, depth, alpha):
 
         if value > best:
             best = value
-            alpha = max(alpha, min(value - 1000, value * 1.2, value * 0.8))
+            alpha = max(alpha, min(value - 5000, value * 1.2, value * 0.8))
 
     return best
 
 @njit
 def pre_evaluate():
-    value_table = np.zeros(2**16)
+    value_table = np.zeros(2**16, dtype=np.float64)
     for i in range(2 ** 16):
         line = [
             (i >> 0) % 16,
@@ -99,11 +102,6 @@ def pre_evaluate():
 
 @njit
 def evaluate_line(line):
-    # snake= [[1,1,1,1],
-    #         [.5,.7,1,1],
-    #         [-.5,-1.5,-1.8,-2],
-    #         [-3.8,-3.7,-3.5,-3]]
-    
     # sum_power = 3.5
     # sum_weight = 11
     monotonic_power = 4
@@ -143,24 +141,33 @@ def evaluate_line(line):
 
     return value
 
+snake = np.array([[0.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                    [2.0, 3.0, 4.0, 5.0],
+                    [8.0, 6.0, 5.0, 4.0]], dtype=np.float64)
+
 @njit   
 def evaluate(board):
-    rank = np.zeros((4, 4), dtype=types.int32)
+    value = 0.0
+    rank = np.zeros((4, 4), dtype=np.int32)
     for i in range(4):
         for j in range(4):
-            rank[i][j] = 0 if board[i][j] == 0 else int(np.log2(board[i][j]))
+            if board[i][j] != 0:
+                rank[i][j] = int(np.log2(board[i][j]))
+                value += (rank[i][j] ** 3) * 2 ** snake[i][j]
 
     rank2 = rank.T
-    return _evaluate(rank) + _evaluate(rank2)
+    return _evaluate(rank) + _evaluate(rank2) + value / 50
 
 @njit
 def _evaluate(rank):
-    global value_table
-    value = 0
+    val = 0.0
     for i in range(4):
-        idx = rank[i][0] + rank[i][1] * 2**4 + rank[i][2] * 2**8 + rank[i][3] * 2**12
-        value += value_table[idx]
-
-    return value
+        idx = (rank[i, 0]
+               + (rank[i, 1] << 4)
+               + (rank[i, 2] << 8)
+               + (rank[i, 3] << 12))
+        val += value_table[idx]
+    return val
 
 value_table = pre_evaluate()
