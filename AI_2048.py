@@ -5,7 +5,7 @@ from numba import njit, types
 @njit
 def find_best(board, depth=0):
     if depth == 0:
-        depth = max(3, (17 - len(empty_cells(board))) // 3)
+        depth = max(3, (16 - len(empty_cells(board))) // 3)
 
     best_move = 3
     best = -1e+6
@@ -68,15 +68,16 @@ def expectimax_pvs(board, depth, alpha):
             next_boards, probs = next_2_board(new_board)
         else:
             next_boards, probs = all_next_board(new_board)
-        # if not first and depth > 1:
-        #     for i in range(len(next_boards)):
-        #         v = evaluate(next_boards[i])
-        #         value += v * probs[i]
+        if not first and depth > 1:
+            for i in range(len(next_boards)):
+                v = evaluate(next_boards[i])
+                value += v * probs[i]
 
-        # if value < alpha:
-        #     continue
+        if value < alpha:
+            continue
 
         value = 0
+        first = False
         for i in range(len(next_boards)):
             v = expectimax_pvs(next_boards[i], depth-1, alpha)
             value += v * probs[i]
@@ -104,8 +105,8 @@ def pre_evaluate():
 def evaluate_line(line):
     # sum_power = 3.5
     # sum_weight = 11
-    monotonic_power = 4
-    monotonic_weight = 3
+    monotonic_power = 3
+    monotonic_weight = 10
     merge_weight = 40
     empty_weight = 27
 
@@ -145,6 +146,7 @@ snake = np.array([[0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0],
                     [2.0, 3.0, 4.0, 5.0],
                     [8.0, 6.0, 5.0, 4.0]], dtype=np.float64)
+snake = 2 ** snake
 
 @njit   
 def evaluate(board):
@@ -154,7 +156,7 @@ def evaluate(board):
         for j in range(4):
             if board[i][j] != 0:
                 rank[i][j] = int(np.log2(board[i][j]))
-                value += (rank[i][j] ** 3) * 2 ** snake[i][j]
+                value += (rank[i][j] ** 3) * snake[i][j]
 
     rank2 = rank.T
     return _evaluate(rank) + _evaluate(rank2) + value / 50
