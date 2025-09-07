@@ -29,10 +29,14 @@ print(find_best(board, 3))
 # for i in range(4):
 #     print(find_best(board, i+1))
 
+# def test(runs=1):
+#     for i in range(runs):
+#         move = find_best(board)
 
-def test(runs=1):
-    for i in range(runs):
-        move = find_best(board)
+a = np.uint64(2**32 + 16)
+b = np.zeros((1, 4), dtype=np.uint16)
+b[0] = a
+print(b)
 
 if __name__ == '__main__':
     import timeit
