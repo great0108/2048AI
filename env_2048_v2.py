@@ -3,6 +3,8 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 import tqdm
+import ray
+from ray.experimental import tqdm_ray
 
 class Batch2048EnvFast(gym.Env):
     """
@@ -356,7 +358,19 @@ class Batch2048EnvFast(gym.Env):
         sub[valid] = v_rows
         self._boards[idx_env] = sub
         
+@ray.remote
+def test(steps, bar):
+    env = Batch2048EnvFast(num_envs=2**15, seed=42)
+    obs, info = env.reset()
 
+    t = 0
+    for step in range(steps):
+        t += 1
+        actions = env.action_space.sample()
+        obs, reward, terminated, truncated, info = env.step(actions)
+        if t == 1000:
+            bar.update.remote(t)
+            t = 0
 
 if __name__ == "__main__":
     env = Batch2048EnvFast(num_envs=2**15, seed=42)
@@ -364,10 +378,26 @@ if __name__ == "__main__":
     print("Initial boards:")
     print(obs)
     print("Info:", info)
+    remote_tqdm = ray.remote(tqdm_ray.tqdm)
 
-    for step in tqdm.tqdm(range(100*2**20//env.num_envs)):
+    for step in tqdm.tqdm(range(200*2**20//env.num_envs)):
         actions = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(actions)
+
+    # with multi processing
+    # n = 5000*2**20//env.num_envs
+    # split = 32  # cpu core num
+
+    # ray.init(num_cpus=split)
+    # remote_tqdm = ray.remote(tqdm_ray.tqdm)
+    # bar = remote_tqdm.remote(total=n)
+    # obj = []
+    # for i in range(split):
+    #     step = n // split if i != 0 else n // split + n % split
+    #     obj.append(test.remote(step, bar))
+
+    # ray.get(obj)
+    # bar.close.remote()
 
 
 # if __name__ == "__main__":
