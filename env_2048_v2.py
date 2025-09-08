@@ -1,4 +1,4 @@
-# tabs-only indentation
+# space-only indentation
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
@@ -9,14 +9,15 @@ from ray.experimental import tqdm_ray
 class Batch2048EnvFast(gym.Env):
     """
     - 내부 상태: boards (N,4) uint16, 각 원소는 4칸 니블(상위→하위)
-    - 전치 상태: is_transposed (N,) bool
     - 액션: 0=LEFT, 1=RIGHT, 2=UP, 3=DOWN
-    - 스폰/보상 미구현(요청대로). invalid_move만 info로 제공.
+    - 스폰/보상 구현. invalid_move, able_move를 info로 제공.
     """
 
     # 클래스 정적 LUT (좌/우 결과행) — __init__에서 필요 시 1회 생성
     _LUT_LEFT_NEW: np.ndarray | None = None     # uint16[65536]
     _LUT_RIGHT_NEW: np.ndarray | None = None    # uint16[65536]
+    _LUT_LEFT_REWARD: np.ndarray | None = None     # int32[65536]
+    _LUT_RIGHT_REWARD: np.ndarray | None = None    # int32[65536]
 
     # 스폰 최적화용 클래스 정적 LUT들
     _PC4: np.ndarray | None = None              # uint8[16], popcount
@@ -26,6 +27,8 @@ class Batch2048EnvFast(gym.Env):
     _LUT_SELECT16: np.ndarray | None = None     # uint8[65536,16,2], (mask16,nth)->(row,col) or (255,255)
     
     _LUT_TRANSPOSE: np.ndarray | None = None  # uint64[65536]
+
+    _LUT_CHOICE_INDEX: np.ndarray | None = None  # int8[16,4], (mask,nth)->index(0..3) or 0
 
     metadata = {"render_modes": []}
 
@@ -43,7 +46,7 @@ class Batch2048EnvFast(gym.Env):
 
         # LUT(좌/우) 준비
         if Batch2048EnvFast._LUT_LEFT_NEW is None:
-            Batch2048EnvFast._LUT_LEFT_NEW, Batch2048EnvFast._LUT_RIGHT_NEW = self._build_row_luts()
+            Batch2048EnvFast._LUT_LEFT_NEW, Batch2048EnvFast._LUT_RIGHT_NEW, Batch2048EnvFast._LUT_LEFT_REWARD, Batch2048EnvFast._LUT_RIGHT_REWARD = self._build_row_luts()
 
         if Batch2048EnvFast._LUT_TRANSPOSE is None:
             Batch2048EnvFast._LUT_TRANSPOSE = self._build_transpose_luts()
@@ -51,6 +54,9 @@ class Batch2048EnvFast(gym.Env):
         # 스폰용 LUT들 준비 (최초 한 번)
         if Batch2048EnvFast._LUT_EMPTY4_ROW is None:
             self._init_spawn_luts()
+
+        if Batch2048EnvFast._LUT_CHOICE_INDEX is None:
+            Batch2048EnvFast._LUT_CHOICE_INDEX = self._build_choice_luts()
 
     # ---------- 공개 API ----------
 
@@ -61,15 +67,18 @@ class Batch2048EnvFast(gym.Env):
         # Removed self._is_transposed.fill(False)
         self._spawn_random_tile_batch_bitwise(np.full((self.num_envs,), True), p4=0.1)
         obs = self._boards.copy()
-        info = {}
+        info = {
+            "invalid_move": np.zeros((self.num_envs,), dtype=bool),  # 이번 액션이 무효였는지
+            "able_move": self._able_move(),  # 각 방향으로 이동 가능 여부 (N,4) bool
+        }
         return obs, info
-
+    
     def step(self, action: int | list | tuple | np.ndarray):
         """
         action: (N,) int64 in {0,1,2,3}
         - 수평 액션(0/1)인데 현재 전치 상태면 → 전치 해제(원상태로)
         - 수직 액션(2/3)인데 현재 비전치면 → 전치 적용(수평화)
-        그 뒤, 좌/우 LUT로 행별 변환. 복원 없이 전치 플래그만 유지/토글.
+        그 뒤, 좌/우 LUT로 행별 변환.
         """
         if isinstance(action, (list, tuple)):
             action = np.asarray(action, dtype=np.int64)
@@ -83,15 +92,18 @@ class Batch2048EnvFast(gym.Env):
         # Removed transpose state alignment block using _is_transposed
 
         before = self._boards.copy()
+        reward = np.zeros((self.num_envs,), dtype=np.int32)
 
         # Horizontal: LEFT
         idx = np.nonzero(action == 0)[0]
         if idx.size:
+            self._cal_reward(idx, Batch2048EnvFast._LUT_LEFT_REWARD, reward)
             self._apply_lut_inplace(idx, Batch2048EnvFast._LUT_LEFT_NEW)
 
         # Horizontal: RIGHT
         idx = np.nonzero(action == 1)[0]
         if idx.size:
+            self._cal_reward(idx, Batch2048EnvFast._LUT_RIGHT_REWARD, reward)
             self._apply_lut_inplace(idx, Batch2048EnvFast._LUT_RIGHT_NEW)
 
         # Vertical: transpose, apply, transpose-back
@@ -102,10 +114,12 @@ class Batch2048EnvFast(gym.Env):
             # UP -> LEFT while transposed
             idx_up = np.nonzero(action == 2)[0]
             if idx_up.size:
+                self._cal_reward(idx_up, Batch2048EnvFast._LUT_LEFT_REWARD, reward)
                 self._apply_lut_inplace(idx_up, Batch2048EnvFast._LUT_LEFT_NEW)
             # DOWN -> RIGHT while transposed
             idx_down = np.nonzero(action == 3)[0]
             if idx_down.size:
+                self._cal_reward(idx_down, Batch2048EnvFast._LUT_RIGHT_REWARD, reward)
                 self._apply_lut_inplace(idx_down, Batch2048EnvFast._LUT_RIGHT_NEW)
             # transpose back
             self._transpose_inplace(idx_v)
@@ -115,15 +129,37 @@ class Batch2048EnvFast(gym.Env):
         moved_mask = ~invalid
         self._spawn_random_tile_batch_bitwise(moved_mask, p4=0.1)
 
-        # 4) 종료/스폰은 보류(요청). reward=0, done=False
+        # 4) 종료, 보상, 관측값, info 반환
         obs = self._boards.copy()
-        reward = np.zeros((self.num_envs,), dtype=np.float32)
-        terminated = np.zeros((self.num_envs,), dtype=bool)
+        able_move = self._able_move()
+        # done if no able move in any direction
+        terminated = ~able_move.any(axis=1)
+        # no time limit
         truncated = np.zeros((self.num_envs,), dtype=bool)
         info = {
-            "invalid_move": invalid,                 # 이번 액션이 무효였는지
+            "invalid_move": invalid,  # 이번 액션이 무효였는지
+            "able_move": able_move,  # 각 방향으로 이동 가능 여부 (N,4) bool
         }
         return obs, reward, terminated, truncated, info
+    
+    def choice_able_moves(self, able_move: np.ndarray) -> np.ndarray:
+        """
+        able_move: (N,4) bool
+        각 행마다 True인 열 중 하나를 무작위 선택하여 (N,) int 반환.
+        모두 False인 행은 0 반환.
+        """
+        assert able_move.shape == (self.num_envs, 4) and able_move.dtype == bool
+
+        weights = np.array([8, 4, 2, 1])
+        lut_choice_index = Batch2048EnvFast._LUT_CHOICE_INDEX  # (mask,nth)->index(0..3) or 255
+
+        counts = np.maximum(able_move.sum(axis=1), 1)  # 각 행의 True 개수, 최소 1
+        rand_idx = self._rng.integers(0, counts)
+
+        move_type = np.dot(able_move, weights)
+        output = lut_choice_index[move_type, rand_idx]
+
+        return output
 
     # ---------- 유틸 (모두 클래스/인스턴스 메소드, 전역 없음) ----------
 
@@ -138,29 +174,33 @@ class Batch2048EnvFast(gym.Env):
 
     @classmethod
     def _slide_merge_left_row(cls, vals: np.ndarray) -> np.uint16:
-        # 보상/합쳐짐 여부는 무시하고 결과 행만 반환 (LUT 용)
+        # 보상, 결과 행만 반환 (LUT 용)
         comp = [int(v) for v in vals if v != 0]
         out = []
         i = 0
+        reward = 0
         while i < len(comp):
             if i + 1 < len(comp) and comp[i] == comp[i + 1]:
                 out.append(comp[i] + 1)
+                reward += (1 << (comp[i] + 1))
                 i += 2
             else:
                 out.append(comp[i]); i += 1
         while len(out) < 4:
             out.append(0)
-        return np.uint16(cls._pack_row(np.minimum(np.array(out[:4], dtype=np.uint8), 15)))
+        return np.uint16(cls._pack_row(np.minimum(np.array(out[:4], dtype=np.uint8), 15))), reward
 
     @classmethod
     def _build_row_luts(cls):
         """
-        좌/우 결과행 LUT 생성(보상/플래그 없음).
+        좌/우 결과, 보상 행 LUT 생성.
         - LEFT:  r -> left(r)
         - RIGHT: r -> reverse(left(reverse(r)))  (빌드 타임에 계산해 런타임 reverse 제거)
         """
         lut_left = np.zeros(65536, dtype=np.uint16)
         lut_right = np.zeros(65536, dtype=np.uint16)
+        lut_left_reward = np.zeros(65536, dtype=np.int32)
+        lut_right_reward = np.zeros(65536, dtype=np.int32)
 
         def reverse_row16(r: int) -> int:
             # abcd -> dcba
@@ -169,17 +209,19 @@ class Batch2048EnvFast(gym.Env):
         for r in range(65536):
             orig = cls._unpack_row(r)
             # LEFT
-            left_r = cls._slide_merge_left_row(orig)
+            left_r, reward = cls._slide_merge_left_row(orig)
             lut_left[r] = left_r
+            lut_left_reward[r] = reward
 
             # RIGHT (빌드 타임에 역방향 LUT 고정)
             rev = reverse_row16(r)
             rev_orig = cls._unpack_row(rev)
-            rev_left = cls._slide_merge_left_row(rev_orig)
+            rev_left, reward = cls._slide_merge_left_row(rev_orig)
             right_r = reverse_row16(int(rev_left))
             lut_right[r] = right_r
+            lut_right_reward[r] = reward
 
-        return lut_left, lut_right
+        return lut_left, lut_right, lut_left_reward, lut_right_reward
 
     @classmethod
     def _build_transpose_luts(cls):
@@ -188,6 +230,18 @@ class Batch2048EnvFast(gym.Env):
             lut_trans[r] = (r & 0xF000) | (r & 0x0F00) << 20 | (r & 0x00F0) << 40 | (r & 0x000F) << 60
 
         return lut_trans
+    
+    @classmethod
+    def _build_choice_luts(cls):
+        lut_choice_index = np.zeros((16, 4), dtype=np.uint8)
+        for r in range(16):
+            count = 0
+            for i in range(4):
+                if r & (1 << (3 - i)):
+                    lut_choice_index[r, count] = i
+                    count += 1
+
+        return lut_choice_index
 
     def _apply_lut_inplace(self, idx: np.ndarray, lut_rows: np.ndarray):
         """
@@ -195,6 +249,33 @@ class Batch2048EnvFast(gym.Env):
         행마다 독립적으로 1D 인덱싱 → 벡터화.
         """
         self._boards[idx] = lut_rows[self._boards[idx]]
+
+    def _cal_reward(self, idx: np.ndarray, lut_reward: np.ndarray, reward: np.ndarray):
+        """
+        선택된 보드 idx의 4개 행에 대해 주어진 수평 보상 LUT를 적용하여 보상 합산.
+        행마다 독립적으로 1D 인덱싱 → 벡터화.
+        """
+        reward[idx] = lut_reward[self._boards[idx]].sum(axis=1)
+
+    def _able_move(self):
+        lut_left = Batch2048EnvFast._LUT_LEFT_NEW
+        lut_right = Batch2048EnvFast._LUT_RIGHT_NEW
+        able_move = np.zeros((self.num_envs, 4), dtype=bool)
+        
+        boards = self._boards.copy()
+        boards_left = lut_left[self._boards]
+        boards_right = lut_right[self._boards]
+        able_move[:, 0] = (self._boards != boards_left).any(axis=1)
+        able_move[:, 1] = (self._boards != boards_right).any(axis=1)
+
+        self._transpose_inplace(np.full((self.num_envs,), True))
+        boards_up = lut_left[self._boards]
+        boards_down = lut_right[self._boards]
+        able_move[:, 2] = (self._boards != boards_up).any(axis=1)
+        able_move[:, 3] = (self._boards != boards_down).any(axis=1)
+
+        self._boards = boards
+        return able_move
 
     def _transpose_inplace(self, idx: np.ndarray):
         """
@@ -363,14 +444,12 @@ def test(steps, bar):
     env = Batch2048EnvFast(num_envs=2**15, seed=42)
     obs, info = env.reset()
 
-    t = 0
     for step in range(steps):
-        t += 1
-        actions = env.action_space.sample()
+        actions = env.choice_able_moves(info["able_move"])
         obs, reward, terminated, truncated, info = env.step(actions)
-        if t == 1000:
-            bar.update.remote(t)
-            t = 0
+        if (step+1) % 100 == 0:
+            bar.update.remote(100)
+
 
 if __name__ == "__main__":
     env = Batch2048EnvFast(num_envs=2**15, seed=42)
@@ -380,13 +459,15 @@ if __name__ == "__main__":
     print("Info:", info)
     remote_tqdm = ray.remote(tqdm_ray.tqdm)
 
-    for step in tqdm.tqdm(range(200*2**20//env.num_envs)):
-        actions = env.action_space.sample()
+    for step in tqdm.tqdm(range(100*2**20//env.num_envs)):
+        actions = env.choice_able_moves(info["able_move"])
         obs, reward, terminated, truncated, info = env.step(actions)
+        if terminated.all():
+            env.reset()
 
-    # with multi processing
-    # n = 5000*2**20//env.num_envs
-    # split = 32  # cpu core num
+    # # with multi processing
+    # n = 1000*2**20//env.num_envs
+    # split = 20  # cpu core num
 
     # ray.init(num_cpus=split)
     # remote_tqdm = ray.remote(tqdm_ray.tqdm)

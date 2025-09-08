@@ -33,10 +33,20 @@ print(find_best(board, 3))
 #     for i in range(runs):
 #         move = find_best(board)
 
-a = np.uint64(2**32 + 16)
-b = np.zeros((1, 4), dtype=np.uint16)
-b[0] = a
-print(b)
+rng = np.random.default_rng()
+a = np.array([[True, True, False], [False, False, True]])
+
+# 각 행마다 True인 인덱스 구하기
+idx = np.tile(np.arange(a.shape[1]), (a.shape[0], 1))
+mask = a
+
+# True인 인덱스만 남기고, False는 -1로 채움
+masked = np.where(mask, idx, 4)
+
+# sort로 -1이 뒤로 가게 정렬
+sorted_idx = np.sort(masked, axis=1)
+
+print(sorted_idx)
 
 if __name__ == '__main__':
     import timeit
