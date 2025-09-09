@@ -299,7 +299,6 @@ class Batch2048EnvFast(gym.Env):
 		Batch2048EnvFast._LUT_MASK_SELECT = lut_sel4
 		Batch2048EnvFast._LUT_SELECT16 = lut_sel16
 
-
 	def _spawn_random_tile_batch_bitwise(self, moved_mask: np.ndarray, p4: float = 0.1):
 		"""
 		보드 단위 16비트 빈칸 플래그(LUT)로 완전 벡터 스폰.
@@ -366,7 +365,7 @@ if __name__ == "__main__":
 	print(obs)
 	print("Info:", info)
 
-	for step in tqdm.tqdm(range(100*2**20//env.num_envs)):
+	for step in tqdm.tqdm(range(200*2**20//env.num_envs)):
 		actions = env.action_space.sample()
 		obs, reward, terminated, truncated, info = env.step(actions)
 

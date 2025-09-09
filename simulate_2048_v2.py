@@ -1,12 +1,8 @@
 # space-only indentation
 import numpy as np
-import gymnasium as gym
-from gymnasium import spaces
 import tqdm
-import ray
-from ray.experimental import tqdm_ray
 
-class Batch2048EnvSimulator(gym.Env):
+class Batch2048EnvSimulator():
     """
     - 내부 상태: boards (N,4) uint16, 각 원소는 4칸 니블(상위→하위)
     - 액션: 0=LEFT, 1=RIGHT, 2=UP, 3=DOWN
@@ -37,7 +33,7 @@ class Batch2048EnvSimulator(gym.Env):
     # ---------- 공개 API ----------
 
     @staticmethod
-    def init(seed):
+    def init(seed=2048):
         Batch2048EnvSimulator._rng = np.random.default_rng(seed)
 
         Batch2048EnvSimulator._LUT_LEFT_NEW, Batch2048EnvSimulator._LUT_RIGHT_NEW, Batch2048EnvSimulator._LUT_LEFT_REWARD, Batch2048EnvSimulator._LUT_RIGHT_REWARD = Batch2048EnvSimulator._build_row_luts()
@@ -51,11 +47,12 @@ class Batch2048EnvSimulator(gym.Env):
     @staticmethod
     def init_board(n):
         boards = np.zeros((n, 4), dtype=np.uint16)
-        Batch2048EnvSimulator.spawn_random_tile_batch_bitwise(boards, np.full((n,), True), p4=0.1)
+        Batch2048EnvSimulator.spawn_random_tile(boards, np.full((n,), True), p4=0.1)
+        Batch2048EnvSimulator.spawn_random_tile(boards, np.full((n,), True), p4=0.1)
         return boards
     
     @staticmethod
-    def move(boards: np.ndarray, action: int | list | tuple | np.ndarray):
+    def move(boards: np.ndarray, action: int | list | tuple | np.ndarray, reward=False):
         """
         action: (N,) int64 in {0,1,2,3}
         - 수평 액션(0/1)인데 현재 전치 상태면 → 전치 해제(원상태로)
@@ -71,33 +68,32 @@ class Batch2048EnvSimulator(gym.Env):
 
         assert action.shape == (boards.shape[0],)
 
-        # Horizontal: LEFT
-        idx = np.nonzero(action == 0)[0]
-        if idx.size:
-            Batch2048EnvSimulator._apply_lut_inplace(idx, Batch2048EnvSimulator._LUT_LEFT_NEW)
+        rewards = np.zeros((boards.shape[0],), dtype=np.int32)
 
-        # Horizontal: RIGHT
-        idx = np.nonzero(action == 1)[0]
-        if idx.size:
-            Batch2048EnvSimulator._apply_lut_inplace(idx, Batch2048EnvSimulator._LUT_RIGHT_NEW)
-
-        # Vertical: transpose, apply, transpose-back
+        # transpose selected boards
         idx_v = np.nonzero((action == 2) | (action == 3))[0]
         if idx_v.size:
-            # transpose selected boards
-            Batch2048EnvSimulator._transpose_inplace(idx_v)
-            # UP -> LEFT while transposed
-            idx_up = np.nonzero(action == 2)[0]
-            if idx_up.size:
-                Batch2048EnvSimulator._apply_lut_inplace(idx_up, Batch2048EnvSimulator._LUT_LEFT_NEW)
-            # DOWN -> RIGHT while transposed
-            idx_down = np.nonzero(action == 3)[0]
-            if idx_down.size:
-                Batch2048EnvSimulator._apply_lut_inplace(idx_down, Batch2048EnvSimulator._LUT_RIGHT_NEW)
-            # transpose back
-            Batch2048EnvSimulator._transpose_inplace(idx_v)
+            Batch2048EnvSimulator._transpose_inplace(boards, idx_v)
 
-        return boards
+        # UP -> LEFT while transposed, LEFT
+        idx = np.nonzero((action == 0) | (action == 2))[0]
+        if idx.size:
+            if reward:
+                Batch2048EnvSimulator._cal_reward(boards, idx, Batch2048EnvSimulator._LUT_LEFT_REWARD, rewards)
+            Batch2048EnvSimulator._apply_lut_inplace(boards, idx, Batch2048EnvSimulator._LUT_LEFT_NEW)
+
+        # DOWN -> RIGHT while transposed, RIGHT
+        idx = np.nonzero((action == 1) | (action == 3))[0]
+        if idx.size:
+            if reward:
+                Batch2048EnvSimulator._cal_reward(boards, idx, Batch2048EnvSimulator._LUT_RIGHT_REWARD, rewards)
+            Batch2048EnvSimulator._apply_lut_inplace(boards, idx, Batch2048EnvSimulator._LUT_RIGHT_NEW)
+
+        # transpose back
+        if idx_v.size:
+            Batch2048EnvSimulator._transpose_inplace(boards, idx_v)
+
+        return rewards
     
     @staticmethod
     def choice_able_moves(able_move: np.ndarray) -> np.ndarray:
@@ -118,6 +114,164 @@ class Batch2048EnvSimulator(gym.Env):
         output = lut_choice_index[move_type, rand_idx]
 
         return output
+
+    @staticmethod
+    def able_move(boards):
+        lut_left = Batch2048EnvSimulator._LUT_LEFT_NEW
+        lut_right = Batch2048EnvSimulator._LUT_RIGHT_NEW
+        num_envs = boards.shape[0]
+        able_move = np.zeros((num_envs, 4), dtype=bool)
+        
+        boards_left = lut_left[boards]
+        boards_right = lut_right[boards]
+        able_move[:, 0] = (boards != boards_left).any(axis=1)
+        able_move[:, 1] = (boards != boards_right).any(axis=1)
+
+        boards_copy = boards.copy()
+        Batch2048EnvSimulator._transpose_inplace(boards_copy, np.full((num_envs,), True))
+        boards_up = lut_left[boards_copy]
+        boards_down = lut_right[boards_copy]
+        able_move[:, 2] = (boards_copy != boards_up).any(axis=1)
+        able_move[:, 3] = (boards_copy != boards_down).any(axis=1)
+
+        return able_move
+
+    @staticmethod
+    def spawn_random_tile(boards: np.ndarray, moved_mask: np.ndarray, p4: float = 0.1):
+        """
+        보드 단위 16비트 빈칸 플래그(LUT)로 완전 벡터 스폰.
+        - moved_mask: (N,) bool
+        """
+        idx_env = np.nonzero(moved_mask)[0]
+        if idx_env.size == 0:
+            return
+
+        empty4 = Batch2048EnvSimulator._LUT_EMPTY4_ROW  # uint8[65536]
+        pc16 = Batch2048EnvSimulator._PC16  # uint8[65536]
+        sel16 = Batch2048EnvSimulator._LUT_SELECT16  # uint8[65536,16,2]
+
+        sub = boards[idx_env]  # (M,4) uint16
+
+        # 1) 행 마스크 → 보드 마스크 16비트 (벡터)
+        row_masks = empty4[sub]  # (M,4) uint8 (각 행 4bit)
+        board_mask16 = (
+            (row_masks[:, 0].astype(np.uint16) << 12) |
+            (row_masks[:, 1].astype(np.uint16) << 8) |
+            (row_masks[:, 2].astype(np.uint16) << 4) |
+            (row_masks[:, 3].astype(np.uint16) << 0)
+        )  # (M,) uint16
+
+        # 2) 총 빈칸 수 & 유효 보드
+        total_empty = pc16[board_mask16.astype(np.int64)].astype(np.int32)  # (M,)
+        valid = total_empty > 0
+        if not np.any(valid):
+            return
+
+        v_rows = sub[valid]  # (Mv,4) uint16
+        v_mask16 = board_mask16[valid].astype(np.int64)  # (Mv,) int64 index
+        v_tot = total_empty[valid]  # (Mv,)
+
+        # 3) nth & k 샘플
+        rng = Batch2048EnvSimulator._rng
+        # numpy Generator.integers는 high에 배열 브로드캐스트 지원. (환경에 따라 random*high로 대체 가능)
+        v_nth = rng.integers(0, v_tot, dtype=np.int32)  # (Mv,)
+        v_k = np.where(rng.random(size=v_tot.shape) < p4, 2, 1).astype(np.uint16)
+
+        # 4) (row, col) = LUT16[mask16, nth]
+        rc = sel16[v_mask16, v_nth]  # (Mv,2) uint8
+        rows = rc[:, 0].astype(np.int64)  # (Mv,)
+        cols = rc[:, 1].astype(np.uint8)  # (Mv,)
+
+        # 5) 니블 세팅 (scatter)
+        shift = ((3 - cols).astype(np.uint16) << 2)  # (Mv,)
+        clear_mask = (~(np.uint16(0xF) << shift) & np.uint16(0xFFFF)).astype(np.uint16)
+        write_val = (v_k << shift).astype(np.uint16)
+
+        old_rows = v_rows[np.arange(v_rows.shape[0]), rows]  # (Mv,)
+        new_rows = (old_rows & clear_mask) | write_val
+        v_rows[np.arange(v_rows.shape[0]), rows] = new_rows
+
+        # 6) 반영
+        sub[valid] = v_rows
+        boards[idx_env] = sub
+
+        return boards
+
+    @staticmethod
+    def all_move_boards(boards):
+        lut_left = Batch2048EnvSimulator._LUT_LEFT_NEW
+        lut_right = Batch2048EnvSimulator._LUT_RIGHT_NEW
+        num_envs = boards.shape[0]
+        moved_boards = np.zeros((num_envs, 4, 4), dtype=np.uint16)
+        
+        moved_boards[:, 0] = lut_left[boards]
+        moved_boards[:, 1] = lut_right[boards]
+
+        boards_copy = boards.copy()
+        Batch2048EnvSimulator._transpose_inplace(boards_copy, np.full((num_envs,), True))
+        up_boards = lut_left[boards_copy]
+        down_boards = lut_right[boards_copy]
+        Batch2048EnvSimulator._transpose_inplace(up_boards, np.full((num_envs,), True))
+        Batch2048EnvSimulator._transpose_inplace(down_boards, np.full((num_envs,), True))
+        moved_boards[:, 2] = up_boards
+        moved_boards[:, 3] = down_boards
+
+        mask = (moved_boards != np.expand_dims(boards, axis=1)).any(axis=2)
+
+        return moved_boards[mask], np.nonzero(mask)[0]
+
+
+    @staticmethod
+    def all_next_boards(boards):
+        empty4 = Batch2048EnvSimulator._LUT_EMPTY4_ROW  # uint8[65536]
+        pc16 = Batch2048EnvSimulator._PC16  # uint8[65536]
+        sel16 = Batch2048EnvSimulator._LUT_SELECT16  # uint8[65536,16,2]
+
+        # 1) 행 마스크 → 보드 마스크 16비트 (벡터)
+        row_masks = empty4[boards]  # (M,4) uint8 (각 행 4bit)
+        board_mask16 = (
+            (row_masks[:, 0].astype(np.uint16) << 12) |
+            (row_masks[:, 1].astype(np.uint16) << 8) |
+            (row_masks[:, 2].astype(np.uint16) << 4) |
+            (row_masks[:, 3].astype(np.uint16) << 0)
+        )  # (M,) uint16
+
+        # 2) 총 빈칸 수 & 유효 보드
+        total_empty = pc16[board_mask16.astype(np.int64)].astype(np.int32)  # (M,)
+        valid = total_empty > 0
+        if not np.any(valid):
+            return boards
+
+        v_rows = boards[valid]  # (Mv,4) uint16
+        v_mask16 = board_mask16[valid].astype(np.int64)  # (Mv,) int64 index
+        v_tot = total_empty[valid]  # (Mv,)
+
+        mask = np.arange(16) < v_tot[:, None]
+        rc = sel16[v_mask16][mask]  # (Mu,2) uint8
+        rows = rc[:, 0].astype(np.int64)  # (Mu,)
+        cols = rc[:, 1].astype(np.uint8)  # (Mu,)
+
+        idx = np.nonzero(mask)[0]  # (Mu,)
+        idx = idx.repeat(2)
+        out = v_rows[idx].copy() 
+
+        # 5) 니블 세팅 (scatter)
+        shift = ((3 - cols).astype(np.uint16) << 2)  # (Mv,)
+        clear_mask = (~(np.uint16(0xF) << shift) & np.uint16(0xFFFF)).astype(np.uint16)
+        write_val_2 = (1 << shift).astype(np.uint16)
+        write_val_4 = (2 << shift).astype(np.uint16)
+        
+        row_idx = np.arange(0, idx.shape[0], 2)
+        old_rows = out[row_idx, rows]  # (Mv,)
+        new_rows = (old_rows & clear_mask) | write_val_2
+        out[row_idx, rows] = new_rows
+
+        row_idx += 1
+        old_rows = out[row_idx, rows]  # (Mv,)
+        new_rows = (old_rows & clear_mask) | write_val_4
+        out[row_idx, rows] = new_rows
+
+        return out, idx
 
     # ---------- 유틸 (모두 클래스/인스턴스 메소드, 전역 없음) ----------
 
@@ -201,55 +355,38 @@ class Batch2048EnvSimulator(gym.Env):
 
         return lut_choice_index
 
-    def _apply_lut_inplace(self, idx: np.ndarray, lut_rows: np.ndarray):
+    @staticmethod
+    def _apply_lut_inplace(boards, idx: np.ndarray, lut_rows: np.ndarray):
         """
         선택된 보드 idx의 4개 행에 대해 주어진 수평 LUT를 적용.
         행마다 독립적으로 1D 인덱싱 → 벡터화.
         """
-        self._boards[idx] = lut_rows[self._boards[idx]]
+        boards[idx] = lut_rows[boards[idx]]
 
-    def _cal_reward(self, idx: np.ndarray, lut_reward: np.ndarray, reward: np.ndarray):
+    @staticmethod
+    def _cal_reward(boards, idx: np.ndarray, lut_reward: np.ndarray, reward: np.ndarray):
         """
         선택된 보드 idx의 4개 행에 대해 주어진 수평 보상 LUT를 적용하여 보상 합산.
         행마다 독립적으로 1D 인덱싱 → 벡터화.
         """
-        reward[idx] = lut_reward[self._boards[idx]].sum(axis=1)
+        reward[idx] = lut_reward[boards[idx]].sum(axis=1)
 
-    def _able_move(self):
-        lut_left = Batch2048EnvSimulator._LUT_LEFT_NEW
-        lut_right = Batch2048EnvSimulator._LUT_RIGHT_NEW
-        able_move = np.zeros((self.num_envs, 4), dtype=bool)
-        
-        boards = self._boards.copy()
-        boards_left = lut_left[self._boards]
-        boards_right = lut_right[self._boards]
-        able_move[:, 0] = (self._boards != boards_left).any(axis=1)
-        able_move[:, 1] = (self._boards != boards_right).any(axis=1)
-
-        self._transpose_inplace(np.full((self.num_envs,), True))
-        boards_up = lut_left[self._boards]
-        boards_down = lut_right[self._boards]
-        able_move[:, 2] = (self._boards != boards_up).any(axis=1)
-        able_move[:, 3] = (self._boards != boards_down).any(axis=1)
-
-        self._boards = boards
-        return able_move
-
-    def _transpose_inplace(self, idx: np.ndarray):
+    @staticmethod
+    def _transpose_inplace(boards, idx: np.ndarray):
         """
         비트연산 전치 (4x4 니블).
         boards[idx]: (M,4) uint16 의 각 보드를 전치하여 다시 (M,4)에 저장.
         """
-        sub = self._boards[idx]  # (M,4), 각 행은 0xABCD 니블들
+        sub = boards[idx]  # (M,4), 각 행은 0xABCD 니블들
 
-        lut_trans = self._LUT_TRANSPOSE
+        lut_trans = Batch2048EnvSimulator._LUT_TRANSPOSE
         t = lut_trans[sub[:, 0]] | (lut_trans[sub[:, 1]] >> 4) | (lut_trans[sub[:, 2]] >> 8) | (lut_trans[sub[:, 3]] >> 12)
 
         # use implicit type casting
-        self._boards[idx, 0] = t
-        self._boards[idx, 1] = (t >> 16)
-        self._boards[idx, 2] = (t >> 32)
-        self._boards[idx, 3] = (t >> 48)
+        boards[idx, 0] = t
+        boards[idx, 1] = (t >> 16)
+        boards[idx, 2] = (t >> 32)
+        boards[idx, 3] = (t >> 48)
 
         # same as this code
         # row_mask = np.uint64(0xFFFF)
@@ -258,7 +395,8 @@ class Batch2048EnvSimulator(gym.Env):
         # self._boards[idx, 2] = (t >> 32) & row_mask
         # self._boards[idx, 3] = (t >> 48) & row_mask
 
-    def _init_spawn_luts(self):
+    @classmethod
+    def _init_spawn_luts(cls):
         """
         스폰 최적화용 LUT를 한 번만 생성.
         - _LUT_EMPTY4_ROW[row16]: 4비트 마스크 (bit3=col0, ..., bit0=col3), 해당 니블==0이면 1
@@ -338,129 +476,16 @@ class Batch2048EnvSimulator(gym.Env):
         Batch2048EnvSimulator._LUT_MASK_SELECT = lut_sel4
         Batch2048EnvSimulator._LUT_SELECT16 = lut_sel16
 
-    @staticmethod
-    def spawn_random_tile_batch_bitwise(boards: np.ndarray, moved_mask: np.ndarray, p4: float = 0.1):
-        """
-        보드 단위 16비트 빈칸 플래그(LUT)로 완전 벡터 스폰.
-        - moved_mask: (N,) bool
-        """
-        idx_env = np.nonzero(moved_mask)[0]
-        if idx_env.size == 0:
-            return
-
-        empty4 = Batch2048EnvSimulator._LUT_EMPTY4_ROW  # uint8[65536]
-        pc16 = Batch2048EnvSimulator._PC16  # uint8[65536]
-        sel16 = Batch2048EnvSimulator._LUT_SELECT16  # uint8[65536,16,2]
-
-        sub = boards[idx_env]  # (M,4) uint16
-
-        # 1) 행 마스크 → 보드 마스크 16비트 (벡터)
-        row_masks = empty4[sub]  # (M,4) uint8 (각 행 4bit)
-        board_mask16 = (
-            (row_masks[:, 0].astype(np.uint16) << 12) |
-            (row_masks[:, 1].astype(np.uint16) << 8) |
-            (row_masks[:, 2].astype(np.uint16) << 4) |
-            (row_masks[:, 3].astype(np.uint16) << 0)
-        )  # (M,) uint16
-
-        # 2) 총 빈칸 수 & 유효 보드
-        total_empty = pc16[board_mask16.astype(np.int64)].astype(np.int32)  # (M,)
-        valid = total_empty > 0
-        if not np.any(valid):
-            return
-
-        v_rows = sub[valid]  # (Mv,4) uint16
-        v_mask16 = board_mask16[valid].astype(np.int64)  # (Mv,) int64 index
-        v_tot = total_empty[valid]  # (Mv,)
-
-        # 3) nth & k 샘플
-        rng = Batch2048EnvSimulator._rng
-        # numpy Generator.integers는 high에 배열 브로드캐스트 지원. (환경에 따라 random*high로 대체 가능)
-        v_nth = rng.integers(0, v_tot, dtype=np.int32)  # (Mv,)
-        v_k = np.where(rng.random(size=v_tot.shape) < p4, 2, 1).astype(np.uint16)
-
-        # 4) (row, col) = LUT16[mask16, nth]
-        rc = sel16[v_mask16, v_nth]  # (Mv,2) uint8
-        rows = rc[:, 0].astype(np.int64)  # (Mv,)
-        cols = rc[:, 1].astype(np.uint8)  # (Mv,)
-
-        # 5) 니블 세팅 (scatter)
-        shift = ((3 - cols).astype(np.uint16) << 2)  # (Mv,)
-        clear_mask = (~(np.uint16(0xF) << shift) & np.uint16(0xFFFF)).astype(np.uint16)
-        write_val = (v_k << shift).astype(np.uint16)
-
-        old_rows = v_rows[np.arange(v_rows.shape[0]), rows]  # (Mv,)
-        new_rows = (old_rows & clear_mask) | write_val
-        v_rows[np.arange(v_rows.shape[0]), rows] = new_rows
-
-        # 6) 반영
-        sub[valid] = v_rows
-        boards[idx_env] = sub
-
-@ray.remote
-def test(steps, bar):
-    env = Batch2048EnvSimulator(num_envs=2**15, seed=42)
-    obs, info = env.reset()
-
-    for step in range(steps):
-        actions = env.choice_able_moves(info["able_move"])
-        obs, reward, terminated, truncated, info = env.step(actions)
-        if (step+1) % 100 == 0:
-            bar.update.remote(100)
+Batch2048EnvSimulator.init()
 
 
 if __name__ == "__main__":
-    env = Batch2048EnvSimulator(num_envs=2**15, seed=42)
-    obs, info = env.reset()
-    print("Initial boards:")
-    print(obs)
-    print("Info:", info)
-    remote_tqdm = ray.remote(tqdm_ray.tqdm)
+    num_env = 2**15
+    boards = Batch2048EnvSimulator.init_board(num_env)
+    able_move = Batch2048EnvSimulator.able_move(boards)
 
-    for step in tqdm.tqdm(range(100*2**20//env.num_envs)):
-        actions = env.choice_able_moves(info["able_move"])
-        obs, reward, terminated, truncated, info = env.step(actions)
-        if terminated.all():
-            env.reset()
-
-    # # with multi processing
-    # n = 1000*2**20//env.num_envs
-    # split = 20  # cpu core num
-
-    # ray.init(num_cpus=split)
-    # remote_tqdm = ray.remote(tqdm_ray.tqdm)
-    # bar = remote_tqdm.remote(total=n)
-    # obj = []
-    # for i in range(split):
-    #     step = n // split if i != 0 else n // split + n % split
-    #     obj.append(test.remote(step, bar))
-
-    # ray.get(obj)
-    # bar.close.remote()
-
-
-# if __name__ == "__main__":
-#     env = Batch2048EnvFast(num_envs=1, seed=42)
-#     obs, info = env.reset()
-#     print("Initial boards:")
-#     print(obs)
-#     print("Info:", info)
-#
-#     for step in range(1000):
-#         # actions = env.action_space.sample()
-#         input_str = input("Enter action (a=LEFT, d=RIGHT, w=UP, s=DOWN, q=quit): ").strip().lower()
-#         if input_str == 'q':
-#             break
-#         action_map = {'a': 0, 'd': 1, 'w': 2, 's': 3}
-#         if input_str not in action_map:
-#             print("Invalid input. Please enter a, d, w, s, or q.")
-#             continue
-#         actions = np.array([action_map[input_str]], dtype=np.int64)
-#         obs, reward, terminated, truncated, info = env.step(actions)
-#         print(f"\nStep {step+1}, Actions: {actions}")
-#         print("Boards:")
-#         for row in obs.swapaxes(0, 1):
-#             for r in row:
-#                 cells = [(r >> shift) & 0xF for shift in (12, 8, 4, 0)]
-#                 print(" ".join(f"{(1 << v) if v > 0 else 0:4d}" for v in cells))
-#             print()
+    for step in tqdm.tqdm(range(100*2**20//num_env)):
+        actions = Batch2048EnvSimulator.choice_able_moves(able_move)
+        rewards = Batch2048EnvSimulator.move(boards, actions, reward=True)
+        mask = actions == 255
+        Batch2048EnvSimulator.spawn_random_tile(boards, mask)

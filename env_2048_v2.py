@@ -28,7 +28,7 @@ class Batch2048EnvFast(gym.Env):
     
     _LUT_TRANSPOSE: np.ndarray | None = None  # uint64[65536]
 
-    _LUT_CHOICE_INDEX: np.ndarray | None = None  # int8[16,4], (mask,nth)->index(0..3) or 0
+    _LUT_CHOICE_INDEX: np.ndarray | None = None  # int8[16,4], (mask,nth)->index(0..3) or 255
 
     metadata = {"render_modes": []}
 
@@ -66,6 +66,7 @@ class Batch2048EnvFast(gym.Env):
         self._boards.fill(0)
         # Removed self._is_transposed.fill(False)
         self._spawn_random_tile_batch_bitwise(np.full((self.num_envs,), True), p4=0.1)
+        self._spawn_random_tile_batch_bitwise(np.full((self.num_envs,), True), p4=0.1)
         obs = self._boards.copy()
         info = {
             "invalid_move": np.zeros((self.num_envs,), dtype=bool),  # 이번 액션이 무효였는지
@@ -94,34 +95,25 @@ class Batch2048EnvFast(gym.Env):
         before = self._boards.copy()
         reward = np.zeros((self.num_envs,), dtype=np.int32)
 
-        # Horizontal: LEFT
-        idx = np.nonzero(action == 0)[0]
+        # transpose selected boards
+        idx_v = np.nonzero((action == 2) | (action == 3))[0]
+        if idx_v.size:
+            self._transpose_inplace(idx_v)
+
+        # UP -> LEFT while transposed, LEFT
+        idx = np.nonzero((action == 0) | (action == 2))[0]
         if idx.size:
             self._cal_reward(idx, Batch2048EnvFast._LUT_LEFT_REWARD, reward)
             self._apply_lut_inplace(idx, Batch2048EnvFast._LUT_LEFT_NEW)
 
-        # Horizontal: RIGHT
-        idx = np.nonzero(action == 1)[0]
+        # DOWN -> RIGHT while transposed, RIGHT
+        idx = np.nonzero((action == 1) | (action == 3))[0]
         if idx.size:
             self._cal_reward(idx, Batch2048EnvFast._LUT_RIGHT_REWARD, reward)
             self._apply_lut_inplace(idx, Batch2048EnvFast._LUT_RIGHT_NEW)
 
-        # Vertical: transpose, apply, transpose-back
-        idx_v = np.nonzero((action == 2) | (action == 3))[0]
+        # transpose back
         if idx_v.size:
-            # transpose selected boards
-            self._transpose_inplace(idx_v)
-            # UP -> LEFT while transposed
-            idx_up = np.nonzero(action == 2)[0]
-            if idx_up.size:
-                self._cal_reward(idx_up, Batch2048EnvFast._LUT_LEFT_REWARD, reward)
-                self._apply_lut_inplace(idx_up, Batch2048EnvFast._LUT_LEFT_NEW)
-            # DOWN -> RIGHT while transposed
-            idx_down = np.nonzero(action == 3)[0]
-            if idx_down.size:
-                self._cal_reward(idx_down, Batch2048EnvFast._LUT_RIGHT_REWARD, reward)
-                self._apply_lut_inplace(idx_down, Batch2048EnvFast._LUT_RIGHT_NEW)
-            # transpose back
             self._transpose_inplace(idx_v)
 
         # 3) 이동된 보드에 대해 타일 스폰
@@ -132,8 +124,9 @@ class Batch2048EnvFast(gym.Env):
         # 4) 종료, 보상, 관측값, info 반환
         obs = self._boards.copy()
         able_move = self._able_move()
-        # done if no able move in any direction
-        terminated = ~able_move.any(axis=1)
+        # done if no able move in all direction
+        terminated = ~able_move.all(axis=1)
+        # terminated = np.zeros((self.num_envs,), dtype=bool)
         # no time limit
         truncated = np.zeros((self.num_envs,), dtype=bool)
         info = {
@@ -146,7 +139,7 @@ class Batch2048EnvFast(gym.Env):
         """
         able_move: (N,4) bool
         각 행마다 True인 열 중 하나를 무작위 선택하여 (N,) int 반환.
-        모두 False인 행은 0 반환.
+        모두 False인 행은 255 반환.
         """
         assert able_move.shape == (self.num_envs, 4) and able_move.dtype == bool
 
@@ -233,7 +226,7 @@ class Batch2048EnvFast(gym.Env):
     
     @classmethod
     def _build_choice_luts(cls):
-        lut_choice_index = np.zeros((16, 4), dtype=np.uint8)
+        lut_choice_index = np.full((16, 4), 255, dtype=np.uint8)
         for r in range(16):
             count = 0
             for i in range(4):
@@ -459,35 +452,42 @@ if __name__ == "__main__":
     print("Info:", info)
     remote_tqdm = ray.remote(tqdm_ray.tqdm)
 
-    for step in tqdm.tqdm(range(100*2**20//env.num_envs)):
+    a = Batch2048EnvFast._LUT_LEFT_NEW.copy()
+    for step in tqdm.tqdm(range(200*2**20//env.num_envs)):
+        # actions = env.action_space.sample()
+        # obs, reward, terminated, truncated, info = env.step(actions)
         actions = env.choice_able_moves(info["able_move"])
         obs, reward, terminated, truncated, info = env.step(actions)
         if terminated.all():
             env.reset()
 
-    # # with multi processing
-    # n = 1000*2**20//env.num_envs
-    # split = 20  # cpu core num
+#     # # with multi processing
+#     # n = 1000*2**20//env.num_envs
+#     # split = 20  # cpu core num
 
-    # ray.init(num_cpus=split)
-    # remote_tqdm = ray.remote(tqdm_ray.tqdm)
-    # bar = remote_tqdm.remote(total=n)
-    # obj = []
-    # for i in range(split):
-    #     step = n // split if i != 0 else n // split + n % split
-    #     obj.append(test.remote(step, bar))
+#     # ray.init(num_cpus=split)
+#     # remote_tqdm = ray.remote(tqdm_ray.tqdm)
+#     # bar = remote_tqdm.remote(total=n)
+#     # obj = []
+#     # for i in range(split):
+#     #     step = n // split if i != 0 else n // split + n % split
+#     #     obj.append(test.remote(step, bar))
 
-    # ray.get(obj)
-    # bar.close.remote()
+#     # ray.get(obj)
+#     # bar.close.remote()
 
 
 # if __name__ == "__main__":
 #     env = Batch2048EnvFast(num_envs=1, seed=42)
 #     obs, info = env.reset()
 #     print("Initial boards:")
-#     print(obs)
+#     for row in obs.swapaxes(0, 1):
+#             for r in row:
+#                 cells = [(r >> shift) & 0xF for shift in (12, 8, 4, 0)]
+#                 print(" ".join(f"{(1 << v) if v > 0 else 0:4d}" for v in cells))
+#             print()
 #     print("Info:", info)
-#
+
 #     for step in range(1000):
 #         # actions = env.action_space.sample()
 #         input_str = input("Enter action (a=LEFT, d=RIGHT, w=UP, s=DOWN, q=quit): ").strip().lower()
@@ -500,6 +500,7 @@ if __name__ == "__main__":
 #         actions = np.array([action_map[input_str]], dtype=np.int64)
 #         obs, reward, terminated, truncated, info = env.step(actions)
 #         print(f"\nStep {step+1}, Actions: {actions}")
+#         print("Info:", info)
 #         print("Boards:")
 #         for row in obs.swapaxes(0, 1):
 #             for r in row:
