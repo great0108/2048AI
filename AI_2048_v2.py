@@ -1,8 +1,9 @@
 import numpy as np
 from simulate_2048_v2 import Batch2048EnvSimulator
 from tqdm import tqdm
+import ray
 
-def find_best(board, depth=None):
+def find_best(board, depth=None, use_ray=False):
     if depth == None:
         depth = 2
 
@@ -19,7 +20,14 @@ def find_best(board, depth=None):
         value = evaluate(next_boards)
 
     else:
-        value = expectimax(next_boards, depth-1)
+        if use_ray:
+            obj = []
+            for i in range(len(next_boards)):
+                obj.append(expectimax_ray.remote(next_boards[i:i+1], depth-1))
+            value = np.array(ray.get(obj)).flatten()
+            
+        else:
+            value = expectimax(next_boards, depth-1)
 
     value[0::2] *= 0.9
     value[1::2] *= 0.1
@@ -46,6 +54,8 @@ def expectimax(boards, depth):
     out = np.full(n, -1e6, dtype=np.float32)
     np.maximum.at(out, index, value)
     return out
+
+expectimax_ray = ray.remote(expectimax)
 
 def pre_evaluate():
     value_table = np.zeros((4, 2**16), dtype=np.float32)
@@ -128,7 +138,7 @@ if __name__ == "__main__":
     num_env = 1
     boards = Batch2048EnvSimulator.init_board(num_env)
     for i in tqdm(range(1000)):
-        move = find_best(boards, depth=2)
+        move = find_best(boards, depth=3, use_ray=True)
 
     # move = find_best(boards, depth=3)
     # print(boards, move)

@@ -20,7 +20,7 @@ if __name__ == "__main__":
     for _ in tqdm(generator()):
         # actions = env.action_space.sample()
         # obs, reward, terminated, truncated, info = env.step(actions)
-        actions = find_best(obs, depth=2)
+        actions = find_best(obs, depth=2 if score.sum() < 10000 else 3)
         obs, reward, terminated, truncated, info = env.step(actions)
         score += reward
         if terminated.all():

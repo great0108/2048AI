@@ -14,10 +14,12 @@ history = []
 for i in range(runs):
     env.reset()
     canMove = [True] * 4
+    score = 0
     for _ in tqdm(generator()):
-        move = find_best(env.board, depth=3)
+        move = find_best(env.board, depth=3 if score < 10000 else 4)
         history.append({'move': direction[move], 'board': env.board.copy()})
-        board, score, over, canMove = env.step(move)
+        board, reward, over, canMove = env.step(move)
+        score += reward
         if over:
             break
 

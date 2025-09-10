@@ -68,13 +68,13 @@ def expectimax_pvs(board, depth, alpha):
             next_boards, probs = next_2_board(new_board)
         else:
             next_boards, probs = all_next_board(new_board)
-        if not first and depth > 1:
-            for i in range(len(next_boards)):
-                v = evaluate(next_boards[i])
-                value += v * probs[i]
+        # if not first and depth > 1:
+        #     for i in range(len(next_boards)):
+        #         v = evaluate(next_boards[i])
+        #         value += v * probs[i]
 
-        if value < alpha:
-            continue
+        # if value < alpha:
+        #     continue
 
         value = 0
         first = False

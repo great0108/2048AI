@@ -1,6 +1,7 @@
 # space-only indentation
 import numpy as np
 import tqdm
+from numba import njit
 
 class Batch2048EnvSimulator():
     """
@@ -223,7 +224,6 @@ class Batch2048EnvSimulator():
 
         return moved_boards[mask], np.nonzero(mask)[0], np.nonzero(mask)[1]
 
-
     @staticmethod
     def all_next_boards(boards, only_2=False):
         if boards.shape[0] == 0:
@@ -419,10 +419,6 @@ class Batch2048EnvSimulator():
         # self._boards[idx, 2] = (t >> 32) & row_mask
         # self._boards[idx, 3] = (t >> 48) & row_mask
 
-    def a():
-        pass
-
-
     @classmethod
     def _init_spawn_luts(cls):
         """
@@ -512,11 +508,11 @@ if __name__ == "__main__":
     boards = Batch2048EnvSimulator.init_board(num_env)
     able_move = Batch2048EnvSimulator.able_move(boards)
 
-    # for step in tqdm.tqdm(range(100*2**20//num_env)):
-    #     actions = Batch2048EnvSimulator.choice_able_moves(able_move)
-    #     rewards = Batch2048EnvSimulator.move(boards, actions, reward=True)
-    #     mask = actions == 255
-    #     Batch2048EnvSimulator.spawn_random_tile(boards, mask)
+    for step in tqdm.tqdm(range(100*2**20//num_env)):
+        actions = Batch2048EnvSimulator.choice_able_moves(able_move)
+        rewards = Batch2048EnvSimulator.move(boards, actions, reward=True)
+        mask = actions == 255
+        Batch2048EnvSimulator.spawn_random_tile(boards, mask)
 
-    moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(boards)
-    print(moved_boards, index, move)
+    # moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(boards)
+    # print(moved_boards, index, move)
