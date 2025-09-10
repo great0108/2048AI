@@ -7,8 +7,9 @@ def find_best(board, depth=0):
 
     best_move = 3
     best = -1e+6
-    alpha = best
-    first = True
+    moved_board, index, move = Batch2048EnvSimulator.all_move_boards(board)
+    next_boards, index2 = Batch2048EnvSimulator.all_next_boards(moved_board)
+
     for mov in [3, 0, 2, 1]: # prefer down
         new_board = copy_board(board)
         move(new_board, mov)

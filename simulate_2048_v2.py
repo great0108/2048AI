@@ -218,7 +218,7 @@ class Batch2048EnvSimulator():
 
         mask = (moved_boards != np.expand_dims(boards, axis=1)).any(axis=2)
 
-        return moved_boards[mask], np.nonzero(mask)[0]
+        return moved_boards[mask], np.nonzero(mask)[0], np.nonzero(mask)[1]
 
 
     @staticmethod
@@ -480,12 +480,15 @@ Batch2048EnvSimulator.init()
 
 
 if __name__ == "__main__":
-    num_env = 2**15
+    num_env = 2
     boards = Batch2048EnvSimulator.init_board(num_env)
     able_move = Batch2048EnvSimulator.able_move(boards)
 
-    for step in tqdm.tqdm(range(100*2**20//num_env)):
-        actions = Batch2048EnvSimulator.choice_able_moves(able_move)
-        rewards = Batch2048EnvSimulator.move(boards, actions, reward=True)
-        mask = actions == 255
-        Batch2048EnvSimulator.spawn_random_tile(boards, mask)
+    # for step in tqdm.tqdm(range(100*2**20//num_env)):
+    #     actions = Batch2048EnvSimulator.choice_able_moves(able_move)
+    #     rewards = Batch2048EnvSimulator.move(boards, actions, reward=True)
+    #     mask = actions == 255
+    #     Batch2048EnvSimulator.spawn_random_tile(boards, mask)
+
+    moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(boards)
+    print(moved_boards, index, move)
