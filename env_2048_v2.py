@@ -125,7 +125,7 @@ class Batch2048EnvFast(gym.Env):
         obs = self._boards.copy()
         able_move = self._able_move()
         # done if no able move in all direction
-        terminated = ~able_move.all(axis=1)
+        terminated = ~(able_move.any(axis=1))
         # terminated = np.zeros((self.num_envs,), dtype=bool)
         # no time limit
         truncated = np.zeros((self.num_envs,), dtype=bool)
@@ -452,7 +452,6 @@ if __name__ == "__main__":
     print("Info:", info)
     remote_tqdm = ray.remote(tqdm_ray.tqdm)
 
-    a = Batch2048EnvFast._LUT_LEFT_NEW.copy()
     for step in tqdm.tqdm(range(200*2**20//env.num_envs)):
         # actions = env.action_space.sample()
         # obs, reward, terminated, truncated, info = env.step(actions)

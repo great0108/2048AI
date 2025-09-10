@@ -3,10 +3,13 @@ from simulate_2048_v2 import Batch2048EnvSimulator
 
 def find_best(board, depth=None):
     if depth == None:
-        depth = 5
+        depth = 2
 
     if len(board.shape) == 1:
         board = np.expand_dims(board, axis=0)
+
+    if Batch2048EnvSimulator.able_move(board).sum() == 0:
+        return 255
 
     moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(board)
     next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards)
@@ -35,8 +38,8 @@ def expectimax(boards, depth):
     value[0::2] *= 0.9
     value[1::2] *= 0.1
     value = np.bincount(index2, value) / num_cases
-    n = index.max() + 1
-    out = np.full(n, -np.inf, dtype=np.float32)
+    n = boards.shape[0]
+    out = np.full(n, -1e6, dtype=np.float32)
     np.maximum.at(out, index, value)
     return out
 
@@ -120,5 +123,5 @@ value_table = pre_evaluate()
 if __name__ == "__main__":
     num_env = 1
     boards = Batch2048EnvSimulator.init_board(num_env)
-    move = find_best(boards, depth=1)
+    move = find_best(boards, depth=3)
     print(boards, move)
