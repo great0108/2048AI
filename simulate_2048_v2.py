@@ -128,7 +128,7 @@ class Batch2048EnvSimulator():
         able_move[:, 1] = (boards != boards_right).any(axis=1)
 
         boards_copy = boards.copy()
-        Batch2048EnvSimulator._transpose_inplace(boards_copy, np.full((num_envs,), True))
+        Batch2048EnvSimulator._transpose_inplace(boards_copy)
         boards_up = lut_left[boards_copy]
         boards_down = lut_right[boards_copy]
         able_move[:, 2] = (boards_copy != boards_up).any(axis=1)
@@ -202,17 +202,20 @@ class Batch2048EnvSimulator():
         lut_left = Batch2048EnvSimulator._LUT_LEFT_NEW
         lut_right = Batch2048EnvSimulator._LUT_RIGHT_NEW
         num_envs = boards.shape[0]
+        if num_envs == 0:
+            return np.array([], dtype=np.uint16), np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+        
         moved_boards = np.zeros((num_envs, 4, 4), dtype=np.uint16)
         
         moved_boards[:, 0] = lut_left[boards]
         moved_boards[:, 1] = lut_right[boards]
 
         boards_copy = boards.copy()
-        Batch2048EnvSimulator._transpose_inplace(boards_copy, np.full((num_envs,), True))
+        Batch2048EnvSimulator._transpose_inplace(boards_copy)
         up_boards = lut_left[boards_copy]
         down_boards = lut_right[boards_copy]
-        Batch2048EnvSimulator._transpose_inplace(up_boards, np.full((num_envs,), True))
-        Batch2048EnvSimulator._transpose_inplace(down_boards, np.full((num_envs,), True))
+        Batch2048EnvSimulator._transpose_inplace(up_boards)
+        Batch2048EnvSimulator._transpose_inplace(down_boards)
         moved_boards[:, 2] = up_boards
         moved_boards[:, 3] = down_boards
 
@@ -222,7 +225,10 @@ class Batch2048EnvSimulator():
 
 
     @staticmethod
-    def all_next_boards(boards):
+    def all_next_boards(boards, only_2=False):
+        if boards.shape[0] == 0:
+            return np.array([], dtype=np.uint16), np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
+        
         empty4 = Batch2048EnvSimulator._LUT_EMPTY4_ROW  # uint8[65536]
         pc16 = Batch2048EnvSimulator._PC16  # uint8[65536]
         sel16 = Batch2048EnvSimulator._LUT_SELECT16  # uint8[65536,16,2]
@@ -240,7 +246,7 @@ class Batch2048EnvSimulator():
         total_empty = pc16[board_mask16.astype(np.int64)].astype(np.int32)  # (M,)
         valid = total_empty > 0
         if not np.any(valid):
-            return boards
+            return np.array([], dtype=np.uint16), np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
 
         v_rows = boards[valid]  # (Mv,4) uint16
         v_mask16 = board_mask16[valid].astype(np.int64)  # (Mv,) int64 index
@@ -252,26 +258,35 @@ class Batch2048EnvSimulator():
         cols = rc[:, 1].astype(np.uint8)  # (Mu,)
 
         idx = np.nonzero(mask)[0]  # (Mu,)
-        idx = idx.repeat(2)
+        if not only_2:
+            idx = idx.repeat(2)
         out = v_rows[idx].copy() 
 
         # 5) 니블 세팅 (scatter)
-        shift = ((3 - cols).astype(np.uint16) << 2)  # (Mv,)
+        shift = ((3 - cols).astype(np.uint16) << 2)
         clear_mask = (~(np.uint16(0xF) << shift) & np.uint16(0xFFFF)).astype(np.uint16)
         write_val_2 = (1 << shift).astype(np.uint16)
-        write_val_4 = (2 << shift).astype(np.uint16)
+        if not only_2:
+            write_val_4 = (2 << shift).astype(np.uint16)
         
-        row_idx = np.arange(0, idx.shape[0], 2)
-        old_rows = out[row_idx, rows]  # (Mv,)
-        new_rows = (old_rows & clear_mask) | write_val_2
-        out[row_idx, rows] = new_rows
+        if only_2:
+            old_rows = out[np.arange(out.shape[0]), rows]
+            new_rows = (old_rows & clear_mask) | write_val_2
+            out[np.arange(out.shape[0]), rows] = new_rows
+            return out, idx, v_tot
+        
+        else:
+            row_idx = np.arange(0, idx.shape[0], 2)
+            old_rows = out[row_idx, rows]
+            new_rows = (old_rows & clear_mask) | write_val_2
+            out[row_idx, rows] = new_rows
 
-        row_idx += 1
-        old_rows = out[row_idx, rows]  # (Mv,)
-        new_rows = (old_rows & clear_mask) | write_val_4
-        out[row_idx, rows] = new_rows
+            row_idx += 1
+            old_rows = out[row_idx, rows]
+            new_rows = (old_rows & clear_mask) | write_val_4
+            out[row_idx, rows] = new_rows
 
-        return out, idx, v_tot * 2
+            return out, idx, v_tot * 2
 
     # ---------- 유틸 (모두 클래스/인스턴스 메소드, 전역 없음) ----------
 
@@ -372,21 +387,30 @@ class Batch2048EnvSimulator():
         reward[idx] = lut_reward[boards[idx]].sum(axis=1)
 
     @staticmethod
-    def _transpose_inplace(boards, idx: np.ndarray):
+    def _transpose_inplace(boards, idx: np.ndarray | None = None):
         """
         비트연산 전치 (4x4 니블).
         boards[idx]: (M,4) uint16 의 각 보드를 전치하여 다시 (M,4)에 저장.
         """
-        sub = boards[idx]  # (M,4), 각 행은 0xABCD 니블들
+        if idx is None:
+            sub = boards
+        else:
+            sub = boards[idx]  # (M,4), 각 행은 0xABCD 니블들
 
         lut_trans = Batch2048EnvSimulator._LUT_TRANSPOSE
         t = lut_trans[sub[:, 0]] | (lut_trans[sub[:, 1]] >> 4) | (lut_trans[sub[:, 2]] >> 8) | (lut_trans[sub[:, 3]] >> 12)
 
-        # use implicit type casting
-        boards[idx, 0] = t
-        boards[idx, 1] = (t >> 16)
-        boards[idx, 2] = (t >> 32)
-        boards[idx, 3] = (t >> 48)
+        if idx is None:
+            boards[:, 0] = t
+            boards[:, 1] = (t >> 16)
+            boards[:, 2] = (t >> 32)
+            boards[:, 3] = (t >> 48)
+        else:
+            # use implicit type casting
+            boards[idx, 0] = t
+            boards[idx, 1] = (t >> 16)
+            boards[idx, 2] = (t >> 32)
+            boards[idx, 3] = (t >> 48)
 
         # same as this code
         # row_mask = np.uint64(0xFFFF)
@@ -394,6 +418,10 @@ class Batch2048EnvSimulator():
         # self._boards[idx, 1] = (t >> 16) & row_mask
         # self._boards[idx, 2] = (t >> 32) & row_mask
         # self._boards[idx, 3] = (t >> 48) & row_mask
+
+    def a():
+        pass
+
 
     @classmethod
     def _init_spawn_luts(cls):
@@ -477,7 +505,7 @@ class Batch2048EnvSimulator():
         Batch2048EnvSimulator._LUT_SELECT16 = lut_sel16
 
 Batch2048EnvSimulator.init()
-
+    
 
 if __name__ == "__main__":
     num_env = 2

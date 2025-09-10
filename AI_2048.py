@@ -64,7 +64,7 @@ def expectimax_pvs(board, depth, alpha):
             continue
 
         value = 0
-        if depth < 3:
+        if depth < 1:
             next_boards, probs = next_2_board(new_board)
         else:
             next_boards, probs = all_next_board(new_board)

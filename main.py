@@ -15,7 +15,7 @@ for i in range(runs):
     env.reset()
     canMove = [True] * 4
     for _ in tqdm(generator()):
-        move = find_best(env.board)
+        move = find_best(env.board, depth=3)
         history.append({'move': direction[move], 'board': env.board.copy()})
         board, score, over, canMove = env.step(move)
         if over:

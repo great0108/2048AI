@@ -261,7 +261,7 @@ class Batch2048EnvFast(gym.Env):
         able_move[:, 0] = (self._boards != boards_left).any(axis=1)
         able_move[:, 1] = (self._boards != boards_right).any(axis=1)
 
-        self._transpose_inplace(np.full((self.num_envs,), True))
+        self._transpose_inplace()
         boards_up = lut_left[self._boards]
         boards_down = lut_right[self._boards]
         able_move[:, 2] = (self._boards != boards_up).any(axis=1)
@@ -270,21 +270,30 @@ class Batch2048EnvFast(gym.Env):
         self._boards = boards
         return able_move
 
-    def _transpose_inplace(self, idx: np.ndarray):
+    def _transpose_inplace(self, idx: np.ndarray | None = None):
         """
         비트연산 전치 (4x4 니블).
         boards[idx]: (M,4) uint16 의 각 보드를 전치하여 다시 (M,4)에 저장.
         """
-        sub = self._boards[idx]  # (M,4), 각 행은 0xABCD 니블들
+        if idx is None:
+            sub = self._boards
+        else:
+            sub = self._boards[idx]  # (M,4), 각 행은 0xABCD 니블들
 
         lut_trans = self._LUT_TRANSPOSE
         t = lut_trans[sub[:, 0]] | (lut_trans[sub[:, 1]] >> 4) | (lut_trans[sub[:, 2]] >> 8) | (lut_trans[sub[:, 3]] >> 12)
 
-        # use implicit type casting
-        self._boards[idx, 0] = t
-        self._boards[idx, 1] = (t >> 16)
-        self._boards[idx, 2] = (t >> 32)
-        self._boards[idx, 3] = (t >> 48)
+        if idx is None:
+            self._boards[:, 0] = t
+            self._boards[:, 1] = (t >> 16)
+            self._boards[:, 2] = (t >> 32)
+            self._boards[:, 3] = (t >> 48)
+        else:
+            # use implicit type casting
+            self._boards[idx, 0] = t
+            self._boards[idx, 1] = (t >> 16)
+            self._boards[idx, 2] = (t >> 32)
+            self._boards[idx, 3] = (t >> 48)
 
         # same as this code
         # row_mask = np.uint64(0xFFFF)

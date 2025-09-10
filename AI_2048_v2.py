@@ -1,5 +1,6 @@
 import numpy as np
 from simulate_2048_v2 import Batch2048EnvSimulator
+from tqdm import tqdm
 
 def find_best(board, depth=None):
     if depth == None:
@@ -27,16 +28,19 @@ def find_best(board, depth=None):
 
 def expectimax(boards, depth):
     moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(boards)
-    next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards)
+    if moved_boards.shape[0] == 0:
+        return np.full((boards.shape[0],), -1e6, dtype=np.float32)
     
     if depth == 0:
+        next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards, only_2=True)
         value = evaluate(next_boards)
 
     else:
+        next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards)
         value = expectimax(next_boards, depth-1)
-
-    value[0::2] *= 0.9
-    value[1::2] *= 0.1
+        value[0::2] *= 0.9
+        value[1::2] *= 0.1
+    
     value = np.bincount(index2, value) / num_cases
     n = boards.shape[0]
     out = np.full(n, -1e6, dtype=np.float32)
@@ -44,7 +48,7 @@ def expectimax(boards, depth):
     return out
 
 def pre_evaluate():
-    value_table = np.zeros((2**16, 4), dtype=np.float32)
+    value_table = np.zeros((4, 2**16), dtype=np.float32)
     locate_weight = np.array([[0.0, 0.0, 0.0, 0.0],
                     [0.0, 0.0, 0.0, 0.0],
                     [2.0, 3.0, 4.0, 5.0],
@@ -56,10 +60,10 @@ def pre_evaluate():
             (i >> 8) % 16,
             (i >> 12) % 16
         ]
-        value_table[i, 0] = evaluate_line(line, locate_weight[0])
-        value_table[i, 1] = evaluate_line(line, locate_weight[1])
-        value_table[i, 2] = evaluate_line(line, locate_weight[2])
-        value_table[i, 3] = evaluate_line(line, locate_weight[3])
+        value_table[0, i] = evaluate_line(line, locate_weight[0])
+        value_table[1, i] = evaluate_line(line, locate_weight[1])
+        value_table[2, i] = evaluate_line(line, locate_weight[2])
+        value_table[3, i] = evaluate_line(line, locate_weight[3])
     return value_table
 
 def evaluate_line(line, locate_weight):
@@ -105,17 +109,17 @@ def evaluate_line(line, locate_weight):
 
 def evaluate(board):
     trans_board = board.copy()
-    Batch2048EnvSimulator._transpose_inplace(trans_board, np.full((board.shape[0],), True)) 
+    Batch2048EnvSimulator._transpose_inplace(trans_board)  
     return _evaluate(board) + _evaluate(trans_board, locate=False)
 
 def _evaluate(rank, locate=True):
     if locate:
-        return (value_table[:, 0][rank[:, 0]] +
-        value_table[:, 1][rank[:, 1]] +
-        value_table[:, 2][rank[:, 2]] +
-        value_table[:, 3][rank[:, 3]])
+        return (value_table[0][rank[:, 0]] +
+        value_table[1][rank[:, 1]] +
+        value_table[2][rank[:, 2]] +
+        value_table[3][rank[:, 3]])
     
-    v_table = value_table[:, 0]
+    v_table = value_table[0]
     return v_table[rank].sum(axis=1)
 
 value_table = pre_evaluate()
@@ -123,5 +127,8 @@ value_table = pre_evaluate()
 if __name__ == "__main__":
     num_env = 1
     boards = Batch2048EnvSimulator.init_board(num_env)
-    move = find_best(boards, depth=3)
-    print(boards, move)
+    for i in tqdm(range(1000)):
+        move = find_best(boards, depth=2)
+
+    # move = find_best(boards, depth=3)
+    # print(boards, move)
