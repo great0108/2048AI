@@ -1,6 +1,6 @@
-from game_numba import Env2048
-from AI_2048 import find_best, evaluate, expectimax_pvs
-from utils import save_history
+# from game_numba import Env2048
+# from AI_2048 import find_best, evaluate, expectimax_pvs
+# from utils import save_history
 import numpy as np
 
 
@@ -25,7 +25,7 @@ board = [[0, 0, 0, 0],
 [256, 128,  64,  64]]
 
 board = np.array(board)
-print(find_best(board, 3))
+# print(find_best(board, 3))
 # for i in range(4):
 #     print(find_best(board, i+1))
 
@@ -35,11 +35,12 @@ print(find_best(board, 3))
 
 import numpy as np
 
-a = np.array([[1,2], [3,4]])
-b = np.zeros((2, 2))
-b[0] = a[0]
-b[0][0] = 10
-print(a)
+a = np.array([0, 0, 1, 2, 2, 2])
+b = np.array([1, 2, 3, 4, 5, 6])
+n = 3
+out = np.full((n,), -1, dtype=np.float32)
+np.maximum.at(out, a, b)
+print(out)
 
 if __name__ == '__main__':
     import timeit

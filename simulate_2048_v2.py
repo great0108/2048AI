@@ -271,7 +271,7 @@ class Batch2048EnvSimulator():
         new_rows = (old_rows & clear_mask) | write_val_4
         out[row_idx, rows] = new_rows
 
-        return out, idx
+        return out, idx, v_tot * 2
 
     # ---------- 유틸 (모두 클래스/인스턴스 메소드, 전역 없음) ----------
 
