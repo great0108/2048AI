@@ -33,14 +33,24 @@ board = np.array(board)
 #     for i in range(runs):
 #         move = find_best(board)
 
-import numpy as np
 
-a = np.array([0, 0, 1, 2, 2, 2])
-b = np.array([1, 2, 3, 4, 5, 6])
-n = 3
-out = np.full((n,), -1, dtype=np.float32)
-np.maximum.at(out, a, b)
-print(out)
+import time
+import numpy as np
+import ray
+
+ray.init(num_cpus=4)
+
+@ray.remote
+def no_work():
+    a = ray.get(a_id)
+    a[0][0]
+    return
+
+start = time.time()
+a_id = ray.put(np.zeros((5000, 5000)))
+result_ids = [no_work.remote() for x in range(10)]
+results = ray.get(result_ids)
+print("duration =", time.time() - start)
 
 if __name__ == '__main__':
     import timeit

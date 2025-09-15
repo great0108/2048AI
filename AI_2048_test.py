@@ -1,8 +1,6 @@
-from AI_2048_v2 import find_best
+from AI_2048_v2 import AI_2048
 from env_2048_v2 import Batch2048EnvFast
-from simulate_2048_v2 import Batch2048EnvSimulator
 import numpy as np
-import ray
 from tqdm import tqdm
 
 def generator():
@@ -10,7 +8,7 @@ def generator():
         yield
 
 if __name__ == "__main__":
-    env = Batch2048EnvFast(num_envs=1, seed=42)
+    env = Batch2048EnvFast(num_envs=1)
     obs, info = env.reset()
     print("Initial boards:")
     print(obs)
@@ -20,7 +18,7 @@ if __name__ == "__main__":
     for _ in tqdm(generator()):
         # actions = env.action_space.sample()
         # obs, reward, terminated, truncated, info = env.step(actions)
-        actions = find_best(obs, depth=2 if score.sum() < 10000 else 3)
+        actions = AI_2048.find_best(obs, depth=2 if score[0] < 10000 else 3, use_ray=True)
         obs, reward, terminated, truncated, info = env.step(actions)
         score += reward
         if terminated.all():
@@ -29,3 +27,8 @@ if __name__ == "__main__":
     print(score)
     print("Final boards:")
     print(obs)
+    for row in obs.swapaxes(0, 1):
+        for r in row:
+            cells = [(r >> shift) & 0xF for shift in (12, 8, 4, 0)]
+            print(" ".join(f"{(1 << v) if v > 0 else 0:4d}" for v in cells))
+        print()
