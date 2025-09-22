@@ -1,7 +1,6 @@
 # space-only indentation
 import numpy as np
 import tqdm
-from numba import njit
 import ray
 from ray.experimental import tqdm_ray
 
@@ -36,7 +35,7 @@ class Batch2048EnvSimulator():
     # ---------- 공개 API ----------
 
     @staticmethod
-    def init(seed=2048, use_ray=False):
+    def init(seed=2048):
         Batch2048EnvSimulator._rng = np.random.default_rng(seed)
 
         Batch2048EnvSimulator._LUT_LEFT_NEW, Batch2048EnvSimulator._LUT_RIGHT_NEW, Batch2048EnvSimulator._LUT_LEFT_REWARD, Batch2048EnvSimulator._LUT_RIGHT_REWARD = Batch2048EnvSimulator._build_row_luts()
@@ -47,29 +46,15 @@ class Batch2048EnvSimulator():
 
         Batch2048EnvSimulator._LUT_CHOICE_INDEX = Batch2048EnvSimulator._build_choice_luts()
 
-        if use_ray:
-            Batch2048EnvSimulator._LUT_LEFT_NEW = ray.put(Batch2048EnvSimulator._LUT_LEFT_NEW)
-            Batch2048EnvSimulator._LUT_RIGHT_NEW = ray.put(Batch2048EnvSimulator._LUT_RIGHT_NEW)
-            Batch2048EnvSimulator._LUT_LEFT_REWARD = ray.put(Batch2048EnvSimulator._LUT_LEFT_REWARD)
-            Batch2048EnvSimulator._LUT_RIGHT_REWARD = ray.put(Batch2048EnvSimulator._LUT_RIGHT_REWARD)
-
-            Batch2048EnvSimulator._PC4 = ray.put(Batch2048EnvSimulator._PC4)
-            Batch2048EnvSimulator._PC16 = ray.put(Batch2048EnvSimulator._PC16)
-            Batch2048EnvSimulator._LUT_EMPTY4_ROW = ray.put(Batch2048EnvSimulator._LUT_EMPTY4_ROW)
-            Batch2048EnvSimulator._LUT_MASK_SELECT = ray.put(Batch2048EnvSimulator._LUT_MASK_SELECT)
-            Batch2048EnvSimulator._LUT_SELECT16 = ray.put(Batch2048EnvSimulator._LUT_SELECT16)
-            Batch2048EnvSimulator._LUT_TRANSPOSE = ray.put(Batch2048EnvSimulator._LUT_TRANSPOSE)
-            Batch2048EnvSimulator._LUT_CHOICE_INDEX = ray.put(Batch2048EnvSimulator._LUT_CHOICE_INDEX)
-
     @staticmethod
-    def init_board(n, use_ray=False):
+    def init_board(n):
         boards = np.zeros((n, 4), dtype=np.uint16)
-        Batch2048EnvSimulator.spawn_random_tile(boards, np.full((n,), True), p4=0.1, use_ray=use_ray)
-        Batch2048EnvSimulator.spawn_random_tile(boards, np.full((n,), True), p4=0.1, use_ray=use_ray)
+        Batch2048EnvSimulator.spawn_random_tile(boards, np.full((n,), True), p4=0.1)
+        Batch2048EnvSimulator.spawn_random_tile(boards, np.full((n,), True), p4=0.1)
         return boards
     
     @staticmethod
-    def move(boards: np.ndarray, action: int | list | tuple | np.ndarray, reward=False, use_ray=False):
+    def move(boards: np.ndarray, action: int | list | tuple | np.ndarray, reward=False):
         """
         action: (N,) int64 in {0,1,2,3}
         - 수평 액션(0/1)인데 현재 전치 상태면 → 전치 해제(원상태로)
@@ -89,18 +74,13 @@ class Batch2048EnvSimulator():
         lut_right = Batch2048EnvSimulator._LUT_RIGHT_NEW
         lut_left_reward = Batch2048EnvSimulator._LUT_LEFT_REWARD
         lut_right_reward = Batch2048EnvSimulator._LUT_RIGHT_REWARD
-        if use_ray:
-            lut_left = ray.get(lut_left)
-            lut_right = ray.get(lut_right)
-            lut_left_reward = ray.get(lut_left_reward)
-            lut_right_reward = ray.get(lut_right_reward)
 
         rewards = np.zeros((boards.shape[0],), dtype=np.int32)
 
         # transpose selected boards
         idx_v = np.nonzero((action == 2) | (action == 3))[0]
         if idx_v.size:
-            Batch2048EnvSimulator._transpose_inplace(boards, idx_v, use_ray)
+            Batch2048EnvSimulator._transpose_inplace(boards, idx_v)
 
         # UP -> LEFT while transposed, LEFT
         idx = np.nonzero((action == 0) | (action == 2))[0]
@@ -118,12 +98,12 @@ class Batch2048EnvSimulator():
 
         # transpose back
         if idx_v.size:
-            Batch2048EnvSimulator._transpose_inplace(boards, idx_v, use_ray)
+            Batch2048EnvSimulator._transpose_inplace(boards, idx_v)
 
         return rewards
     
     @staticmethod
-    def choice_able_moves(able_move: np.ndarray, use_ray=False) -> np.ndarray:
+    def choice_able_moves(able_move: np.ndarray) -> np.ndarray:
         """
         able_move: (N,4) bool
         각 행마다 True인 열 중 하나를 무작위 선택하여 (N,) int 반환.
@@ -133,8 +113,6 @@ class Batch2048EnvSimulator():
 
         weights = np.array([8, 4, 2, 1])
         lut_choice_index = Batch2048EnvSimulator._LUT_CHOICE_INDEX  # (mask,nth)->index(0..3) or 255
-        if use_ray:
-            lut_choice_index = ray.get(lut_choice_index)
 
         counts = np.maximum(able_move.sum(axis=1), 1)  # 각 행의 True 개수, 최소 1
         rand_idx = Batch2048EnvSimulator._rng.integers(0, counts)
@@ -145,12 +123,9 @@ class Batch2048EnvSimulator():
         return output
 
     @staticmethod
-    def able_move(boards, use_ray=False):
+    def able_move(boards):
         lut_left = Batch2048EnvSimulator._LUT_LEFT_NEW
         lut_right = Batch2048EnvSimulator._LUT_RIGHT_NEW
-        if use_ray:
-            lut_left = ray.get(lut_left)
-            lut_right = ray.get(lut_right)
         num_envs = boards.shape[0]
         able_move = np.zeros((num_envs, 4), dtype=bool)
         
@@ -160,7 +135,7 @@ class Batch2048EnvSimulator():
         able_move[:, 1] = (boards != boards_right).any(axis=1)
 
         boards_copy = boards.copy()
-        Batch2048EnvSimulator._transpose_inplace(boards_copy, use_ray=use_ray)
+        Batch2048EnvSimulator._transpose_inplace(boards_copy)
         boards_up = lut_left[boards_copy]
         boards_down = lut_right[boards_copy]
         able_move[:, 2] = (boards_copy != boards_up).any(axis=1)
@@ -169,7 +144,25 @@ class Batch2048EnvSimulator():
         return able_move
 
     @staticmethod
-    def spawn_random_tile(boards: np.ndarray, moved_mask: np.ndarray, p4: float = 0.1, use_ray=False):
+    def empty_space_nums(boards):
+        empty4 = Batch2048EnvSimulator._LUT_EMPTY4_ROW  # uint8[65536]
+        pc16 = Batch2048EnvSimulator._PC16  # uint8[65536]
+
+        # 1) 행 마스크 → 보드 마스크 16비트 (벡터)
+        row_masks = empty4[boards]  # (M,4) uint8 (각 행 4bit)
+        board_mask16 = (
+            (row_masks[:, 0].astype(np.uint16) << 12) |
+            (row_masks[:, 1].astype(np.uint16) << 8) |
+            (row_masks[:, 2].astype(np.uint16) << 4) |
+            (row_masks[:, 3].astype(np.uint16) << 0)
+        )  # (M,) uint16
+
+        # 2) 총 빈칸 수 & 유효 보드
+        total_empty = pc16[board_mask16.astype(np.int64)].astype(np.int32)  # (M,)
+        return total_empty
+
+    @staticmethod
+    def spawn_random_tile(boards: np.ndarray, moved_mask: np.ndarray, p4: float = 0.1):
         """
         보드 단위 16비트 빈칸 플래그(LUT)로 완전 벡터 스폰.
         - moved_mask: (N,) bool
@@ -181,10 +174,6 @@ class Batch2048EnvSimulator():
         empty4 = Batch2048EnvSimulator._LUT_EMPTY4_ROW  # uint8[65536]
         pc16 = Batch2048EnvSimulator._PC16  # uint8[65536]
         sel16 = Batch2048EnvSimulator._LUT_SELECT16  # uint8[65536,16,2]
-        if use_ray:
-            empty4 = ray.get(empty4)
-            pc16 = ray.get(pc16)
-            sel16 = ray.get(sel16)
 
         sub = boards[idx_env]  # (M,4) uint16
 
@@ -234,12 +223,9 @@ class Batch2048EnvSimulator():
         return boards
 
     @staticmethod
-    def all_move_boards(boards, use_ray=False):
+    def all_move_boards(boards):
         lut_left = Batch2048EnvSimulator._LUT_LEFT_NEW
         lut_right = Batch2048EnvSimulator._LUT_RIGHT_NEW
-        if use_ray:
-            lut_left = ray.get(lut_left)
-            lut_right = ray.get(lut_right)
         num_envs = boards.shape[0]
         if num_envs == 0:
             return np.array([], dtype=np.uint16), np.array([], dtype=np.int64), np.array([], dtype=np.int64)
@@ -250,11 +236,11 @@ class Batch2048EnvSimulator():
         moved_boards[:, 1] = lut_right[boards]
 
         boards_copy = boards.copy()
-        Batch2048EnvSimulator._transpose_inplace(boards_copy, use_ray=use_ray)
+        Batch2048EnvSimulator._transpose_inplace(boards_copy)
         up_boards = lut_left[boards_copy]
         down_boards = lut_right[boards_copy]
-        Batch2048EnvSimulator._transpose_inplace(up_boards, use_ray=use_ray)
-        Batch2048EnvSimulator._transpose_inplace(down_boards, use_ray=use_ray)
+        Batch2048EnvSimulator._transpose_inplace(up_boards)
+        Batch2048EnvSimulator._transpose_inplace(down_boards)
         moved_boards[:, 2] = up_boards
         moved_boards[:, 3] = down_boards
 
@@ -263,17 +249,13 @@ class Batch2048EnvSimulator():
         return moved_boards[mask], np.nonzero(mask)[0], np.nonzero(mask)[1]
 
     @staticmethod
-    def all_next_boards(boards, only_2=False, use_ray=False):
+    def all_next_boards(boards, only_2=False):
         if boards.shape[0] == 0:
             return np.array([], dtype=np.uint16), np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
         
         empty4 = Batch2048EnvSimulator._LUT_EMPTY4_ROW  # uint8[65536]
         pc16 = Batch2048EnvSimulator._PC16  # uint8[65536]
         sel16 = Batch2048EnvSimulator._LUT_SELECT16  # uint8[65536,16,2]
-        if use_ray:
-            empty4 = ray.get(empty4)
-            pc16 = ray.get(pc16)
-            sel16 = ray.get(sel16)
 
         # 1) 행 마스크 → 보드 마스크 16비트 (벡터)
         row_masks = empty4[boards]  # (M,4) uint8 (각 행 4bit)
@@ -429,7 +411,7 @@ class Batch2048EnvSimulator():
         reward[idx] = lut_reward[boards[idx]].sum(axis=1)
 
     @staticmethod
-    def _transpose_inplace(boards, idx: np.ndarray | None = None, use_ray=False):
+    def _transpose_inplace(boards, idx: np.ndarray | None = None):
         """
         비트연산 전치 (4x4 니블).
         boards[idx]: (M,4) uint16 의 각 보드를 전치하여 다시 (M,4)에 저장.
@@ -440,8 +422,6 @@ class Batch2048EnvSimulator():
             sub = boards[idx]  # (M,4), 각 행은 0xABCD 니블들
 
         lut_trans = Batch2048EnvSimulator._LUT_TRANSPOSE
-        if use_ray:
-            lut_trans = ray.get(lut_trans)
         t = lut_trans[sub[:, 0]] | (lut_trans[sub[:, 1]] >> 4) | (lut_trans[sub[:, 2]] >> 8) | (lut_trans[sub[:, 3]] >> 12)
 
         if idx is None:
@@ -548,7 +528,7 @@ Batch2048EnvSimulator.init()
     
 @ray.remote
 def test(steps, bar):
-    # Batch2048EnvSimulator.init()
+    Batch2048EnvSimulator.init()
     boards = Batch2048EnvSimulator.init_board(num_env)
     able_move = Batch2048EnvSimulator.able_move(boards)
 

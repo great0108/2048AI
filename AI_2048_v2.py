@@ -5,12 +5,10 @@ import ray
 from ray.experimental import tqdm_ray
 import time
 
-# @ray.remote(num_cpus=1)
-# def expectimax_remote(boards, depth):
-#     # boards: (batch, ...) 큰 덩어리
-#     return AI_2048.expectimax(boards, depth)
+@ray.remote(num_cpus=2)
+def expectimax_remote(boards, depth):
+    return AI_2048.expectimax2(boards, depth+1)
 
-@ray.remote(num_cpus=1)
 class AI_2048():
     value_table = None
 
@@ -18,27 +16,29 @@ class AI_2048():
     def init(params=None):
         if params is None:
             params = {
-                "sum_weight" : 0.8,
+                "sum_weight" : 660,
+                "sum_power" : 3.5,
                 "locate_power" : 0,
                 "locate_weight" : np.array([[0.0, 0.0, 0.0, 0.0],
                         [0.0, 0.0, 0.0, 0.0],
                         [2.0, 3.0, 4.0, 5.0],
                         [8.0, 6.0, 5.0, 4.0]], dtype=np.float32),
-                "monotonic_power" : 3.1,
-                "monotonic_weight" : 17,
-                "merge_weight" : 11,
-                "empty_weight" : 6
+                "monotonic_power" : 3.7,
+                "monotonic_weight" : 28,
+                "merge_weight" : 750,
+                "empty_weight" : 300
             }
 
         AI_2048.value_table = AI_2048.pre_evaluate(params)
 
     @staticmethod
     def find_best(board, depth=None, use_ray=False):
-        if depth == None:
-            depth = 2
 
         if len(board.shape) == 1:
             board = np.expand_dims(board, axis=0)
+
+        if depth == None:
+            depth = max(2, (12 - Batch2048EnvSimulator.empty_space_nums(board)[0]) // 3)
 
         if Batch2048EnvSimulator.able_move(board).sum() == 0:
             return 255
@@ -53,7 +53,7 @@ class AI_2048():
             if use_ray:
                 obj = []
                 for i in range(len(next_boards)):
-                    obj.append(expectimax_ray.remote(np.array(next_boards[i:i+1]), depth-1))
+                    obj.append(expectimax_remote.remote(np.array(next_boards[i:i+1]), depth-1))
                 value = np.array(ray.get(obj)).flatten()
                 
             else:
@@ -114,6 +114,7 @@ class AI_2048():
         empty_weight = params["empty_weight"]
 
         sum_value = 0
+        locate_value = 0
         empty = 0
         merges = 0
 
@@ -123,7 +124,7 @@ class AI_2048():
 
         for i in range(4):
             rank = line[i]
-            sum_value += 2 ** rank * locate_weight[i]
+            locate_value += 2 ** rank * locate_weight[i]
             sum_value += 2 ** rank
             if rank == 0:
                 empty += 1
@@ -142,7 +143,7 @@ class AI_2048():
         monotonic = max(monotonic_left, monotonic_right)
 
         value = empty * empty_weight + merges * merge_weight \
-            + monotonic * monotonic_weight + sum_value
+            + monotonic * monotonic_weight + sum_value * sum_weight + locate_value
 
         return value
 
@@ -164,74 +165,12 @@ class AI_2048():
         v_table = value_table[0]
         return v_table[rank].sum(axis=1)
 
-
-def test():
-    boards = Batch2048EnvSimulator.init_board(num_env)
-    moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(boards)
-    next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards)
-
-    obj = []
-    for i in range(len(next_boards)):
-        obj.append(expectimax_ray.remote(np.array(next_boards[i:i+1]), 2))
-    value = np.array(ray.get(obj)).flatten()
-
-
-def find_best(board, depth=None, use_ray=False):
-    t0=time.perf_counter()
-    if depth == None:
-        depth = 2
-
-    if len(board.shape) == 1:
-        board = np.expand_dims(board, axis=0)
-
-    if Batch2048EnvSimulator.able_move(board).sum() == 0:
-        return 255
-
-    moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(board)
-    next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards)
-    t1=time.perf_counter()
-    
-    if depth == 0:
-        value = AI_2048.evaluate(next_boards)
-
-    else:
-        if use_ray:
-            obj = []
-            for i in range(len(next_boards)):
-                obj.append(expectimax_ray.remote(np.array(next_boards[i:i+1]), depth-1))
-            value = np.array(ray.get(obj)).flatten()
-            
-        else:
-            value = AI_2048.expectimax(next_boards, depth-1)
-
-    t2=time.perf_counter()
-    value[0::2] *= 0.9
-    value[1::2] *= 0.1
-    value = np.bincount(index2, value) / num_cases
-    t3=time.perf_counter()
-    print("moves:", t1-t0, "nexts:", t2-t1, "remote:", t3-t2)
-    return move[np.argmax(value)]
-
-@ray.remote(num_cpus=1)
-def expectimax_ray(boards, depth):
-    moved_boards, index, move = Batch2048EnvSimulator.all_move_boards(boards)
-    
-    if depth == 0:
-        next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards, only_2=True)
-
-    else:
-        next_boards, index2, num_cases = Batch2048EnvSimulator.all_next_boards(moved_boards)
-        value = AI_2048.expectimax(next_boards, depth-1)
-        value[0::2] *= 0.9
-        value[1::2] *= 0.1
-    
-    value = np.bincount(index2, value) / num_cases
-    n = boards.shape[0]
-    out = np.full(n, -1e6, dtype=np.float32)
-    np.maximum.at(out, index, value)
-    return out
-
-
+@ray.remote
+def test(steps, bar):
+    boards = Batch2048EnvSimulator.init_board(1)
+    for step in range(steps):
+        move = AI_2048.find_best(boards, depth=3)
+        bar.update.remote(1)
 
 if __name__ == "__main__":
     num_env = 1
@@ -239,9 +178,23 @@ if __name__ == "__main__":
     AI_2048.init()
     Batch2048EnvSimulator.init()
     boards = Batch2048EnvSimulator.init_board(num_env)
-    for i in tqdm(range(1000)):
-        test()
-        # move = AI_2048.find_best(boards, depth=3, use_ray=True)
+
+    # for i in tqdm(range(1000)):
+    #     move = AI_2048.find_best(boards, depth=3)
 
     # move = find_best(boards, depth=3)
     # print(boards, move)
+
+    # with multi processing
+    n = 1000
+    split = 20  # cpu core num
+
+    remote_tqdm = ray.remote(tqdm_ray.tqdm)
+    bar = remote_tqdm.remote(total=n)
+    obj = []
+    for i in range(split):
+        step = n // split if i != 0 else n // split + n % split
+        obj.append(test.remote(step, bar))
+
+    ray.get(obj)
+    bar.close.remote()

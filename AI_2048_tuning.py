@@ -12,13 +12,14 @@ from ray.util.placement_group import get_current_placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from ray.air import session
 
-@ray.remote(num_cpus=2)
-def test():
+@ray.remote(num_cpus=1)
+def test(params):
+    AI_2048.init(params)
     env = Batch2048EnvFast(num_envs=1)
     obs, info = env.reset()
     score = np.zeros((env.num_envs,), dtype=np.float32)
     while True:
-        actions = AI_2048.find_best(obs, depth=2 if score[0] < 10000 else 3)
+        actions = AI_2048.find_best(obs)
         obs, reward, terminated, truncated, info = env.step(actions)
         score += reward
         if terminated[0]:
@@ -34,7 +35,7 @@ def mean_score(params=None):
         placement_group_capture_child_tasks=True
     )
 
-    refs = [test.options(scheduling_strategy=strat).remote()
+    refs = [test.options(scheduling_strategy=strat).remote(params)
             for _ in range(params["n"])]
     scores = ray.get(refs)
     score = float(np.array(scores).mean())
@@ -47,29 +48,30 @@ if __name__ == "__main__":
     short_name = lambda t: f"{t.trainable_name}_{t.trial_id}"
 
     search_space = {
-        "n" : 15,
-        "sum_weight" : tune.uniform(0, 1),
+        "n" : 30,
+        "sum_weight" : tune.uniform(0, 100),
+        "sum_power" : tune.uniform(2, 5),
         "locate_power" : 0,
         "locate_weight" : np.array([[0.0, 0.0, 0.0, 0.0],
                         [0.0, 0.0, 0.0, 0.0],
-                        [2.0, 3.0, 4.0, 5.0],
-                        [8.0, 6.0, 5.0, 4.0]], dtype=np.float32),
+                        [0.0, 0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
         "monotonic_power" : tune.uniform(2, 5),
-        "monotonic_weight" : tune.loguniform(1, 100),
-        "merge_weight" : tune.loguniform(1, 100),
-        "empty_weight" : tune.loguniform(1, 100),
+        "monotonic_weight" : tune.uniform(0, 100),
+        "merge_weight" : tune.uniform(0, 100),
+        "empty_weight" : tune.uniform(0, 100),
     }
 
     algo = OptunaSearch(
         sampler=TPESampler(
-            n_startup_trials=6,    # 초반 랜덤 탐색
+            n_startup_trials=20,    # 초반 랜덤 탐색
             multivariate=True,      # 파라미터 상관관계 활용
         ),
     )
 
-    N = 15  # 동시에 띄울 test 태스크 수(= 예약할 워커 슬롯 수)
+    N = 30  # 동시에 띄울 test 태스크 수(= 예약할 워커 슬롯 수)
     pg = tune.PlacementGroupFactory(
-        [{'CPU': 1.0}] + [{'CPU': 2.0}] * N
+        [{'CPU': 1.0}] + [{'CPU': 1.0}] * N
     )
     trainable_with_resources = tune.with_resources(mean_score, pg)
     
@@ -82,10 +84,7 @@ if __name__ == "__main__":
             trial_dirname_creator=short_dir,       # 폴더명 단축
             trial_name_creator=short_name,          # (선택) 화면용 이름 단축
             max_concurrent_trials=1,
-            num_samples=20
-        ),
-        run_config=tune.RunConfig(
-            stop={"training_iteration": 100}
+            num_samples=100
         ),
         param_space=search_space
     )
